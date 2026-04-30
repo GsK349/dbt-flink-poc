@@ -1,0 +1,88 @@
+# Python & Virtual Environments
+.venv/
+.venv39/
+venv/
+env/
+*.py[cod]
+__pycache__/
+*.egg-info/
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+
+# dbt
+target/
+dbt_packages/
+logs/
+dbt.log
+dbt_project.yml.bak
+profiles.yml.bak
+
+# dbt session cache (user home, but listing for awareness)
+# ~/.dbt/flink-session.yml
+
+# Java & Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+.classpath
+.project
+.settings/
+*.iml
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# Environment & Credentials
+.env
+.env.aws
+.env.local
+.env.*.local
+aws-credentials.json
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Output & Generated Data
+output/
+data/batch/generated_*
+iceberg/
+.parquet
+*.parquet
+
+# OS & Temporary
+.DS_Store
+.AppleDouble
+.LSOverride
+*.tmp
+.cache/
+.tmp/
+
+# Logs
+*.log
+logs/
+
+# IDE temp files
+.vscode/settings.json
+.vscode/launch.json
+
+# Screenshots (if not needed in repo)
+ss/*.HEIC
+.claude/

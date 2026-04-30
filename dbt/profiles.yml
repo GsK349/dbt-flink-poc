@@ -1,0 +1,11 @@
+flink_iceberg:
+  target: dev
+  outputs:
+    dev:
+      type: flink
+      host: localhost
+      port: 8083
+      session_name: dbt_session
+      database: default_catalog
+      schema: default_database
+      threads: 1

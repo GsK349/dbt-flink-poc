@@ -1,0 +1,16 @@
+flink_iceberg:
+  target: dev
+  outputs:
+    dev:
+      type: flink
+      method: local
+      host: localhost
+      port: 8083
+      schema: default
+      database: default
+      catalog: iceberg_catalog
+      warehouse: /opt/flink/iceberg_warehouse
+      threads: 1
+      jar_paths:
+        - /opt/flink/usrlib/flink-sql-connector-kafka-1.17.0.jar
+      use_ssl: false

@@ -1,0 +1,119 @@
+version: "3.8"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.1
+    platform: linux/amd64
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - flink
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.1
+    platform: linux/amd64
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    networks:
+      - flink
+
+  jobmanager:
+    build:
+      context: .
+      dockerfile: Dockerfile.flink
+    image: flink-dbt-poc:1.0
+    platform: linux/amd64
+    hostname: jobmanager
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        rest.address: jobmanager
+        rest.bind-address: 0.0.0.0
+        taskmanager.numberOfTaskSlots: 4
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+    volumes:
+      - ./data:/opt/flink/data
+      - ./output:/opt/flink/output
+      - ./sql:/opt/flink/sql
+      - ./iceberg:/opt/flink/iceberg_warehouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/overview >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - flink
+
+  taskmanager:
+    image: flink-dbt-poc:1.0
+    platform: linux/amd64
+    command: taskmanager
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+      FLINK_PROPERTIES: |
+        rest.address: jobmanager
+        taskmanager.numberOfTaskSlots: 4
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+    volumes:
+      - ./data:/opt/flink/data
+      - ./output:/opt/flink/output
+      - ./sql:/opt/flink/sql
+      - ./iceberg:/opt/flink/iceberg_warehouse
+    networks:
+      - flink
+
+  sql-gateway:
+    image: flink-dbt-poc:1.0
+    platform: linux/amd64
+    command: >
+      bash -c "/opt/flink/bin/sql-gateway.sh start-foreground -Dsql-gateway.endpoint.rest.address=0.0.0.0 -Dsql-gateway.endpoint.rest.port=8083"
+    ports:
+      - "8083:8083"
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+      FLINK_PROPERTIES: |
+        rest.address: jobmanager
+        rest.bind-address: 0.0.0.0
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+    volumes:
+      - ./data:/opt/flink/data
+      - ./output:/opt/flink/output
+      - ./sql:/opt/flink/sql
+      - ./iceberg:/opt/flink/iceberg_warehouse
+    networks:
+      - flink
+
+networks:
+  flink:
+    name: flink

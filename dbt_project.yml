@@ -1,0 +1,15 @@
+name: flink_dbt_poc
+version: '1.0'
+config-version: 2
+profile: flink_iceberg
+model-paths: ["dbt/models"]
+macro-paths: ["dbt/macros"]
+analysis-paths: ["analysis"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_modules"
+
+on-run-start:
+  - "{{ setup_iceberg_catalog() }}"

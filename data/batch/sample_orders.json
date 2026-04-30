@@ -1,0 +1,3 @@
+{"id":"1","customer_id":"cust_1001","order_ts":"2026-04-28T08:00:00","amount":15.50,"status":"created"}
+{"id":"2","customer_id":"cust_1002","order_ts":"2026-04-28T08:05:00","amount":42.00,"status":"completed"}
+{"id":"3","customer_id":"cust_1003","order_ts":"2026-04-28T08:10:00","amount":9.99,"status":"cancelled"}
