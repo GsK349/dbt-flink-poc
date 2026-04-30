@@ -1,12 +1,17 @@
 -- Streaming with Soft Deletes
 --
 -- Instead of actually deleting rows, add an 'is_deleted' flag.
--- Combines upsert deduplication with reversible deletion.
+-- Combines PRIMARY KEY upsert with reversible deletion.
+-- Operation comes from Kafka header, is_deleted flag is in payload.
 --
 -- Kafka event format:
--- {"id":"1001","customer_id":"cust_1001","amount":15.50,"status":"created","is_deleted":false}
--- {"id":"1001","customer_id":"cust_1001","amount":15.50,"status":"cancelled","is_deleted":true}
--- → Result: Row marked as deleted (but data preserved for audit)
+-- Headers: { "operation": "INSERT" }
+-- Body:    { "id":"1001", "customer_id":"cust_1001", "amount":15.50, "status":"created", "is_deleted":false }
+--
+-- Headers: { "operation": "DELETE" }
+-- Body:    { "id":"1001", "customer_id":"cust_1001", "amount":15.50, "status":"cancelled", "is_deleted":true }
+--
+-- → Result: Row marked as deleted (is_deleted=true) but data preserved for audit/compliance
 
 SET 'execution.runtime-mode' = 'streaming';
 SET 'execution.checkpointing.interval' = '10s';
@@ -15,14 +20,21 @@ SET 'execution.checkpointing.mode' = 'EXACTLY_ONCE';
 USE CATALOG default_catalog;
 USE default_database;
 
--- Kafka source with is_deleted flag
+-- Kafka source with is_deleted flag AND operation header
 CREATE TABLE IF NOT EXISTS orders_soft_delete (
+  -- Data columns (from message body)
   id STRING,
   customer_id STRING,
   order_ts TIMESTAMP(3),
   amount DECIMAL(10,2),
   status STRING,
-  is_deleted BOOLEAN,               -- Soft delete flag
+  is_deleted BOOLEAN DEFAULT FALSE,  -- Soft delete flag (in payload)
+
+  -- Metadata columns (from Kafka headers)
+  operation STRING METADATA FROM 'value.headers.operation',  -- INSERT, UPDATE, DELETE
+  source STRING METADATA FROM 'value.headers.source',        -- origin of event
+  event_timestamp STRING METADATA FROM 'value.headers.timestamp',
+
   PRIMARY KEY (id) NOT ENFORCED
 ) WITH (
   'connector' = 'kafka',
@@ -48,12 +60,16 @@ CREATE TABLE IF NOT EXISTS iceberg_catalog.`default`.iceberg_orders_soft_delete 
   order_ts TIMESTAMP(3),
   amount DECIMAL(10,2),
   status STRING,
-  is_deleted BOOLEAN DEFAULT FALSE
+  is_deleted BOOLEAN DEFAULT FALSE,  -- Soft delete flag
+  operation STRING,                  -- From header
+  source STRING,                     -- From header
+  event_timestamp STRING
 ) WITH (
   'write.format.default' = 'parquet'
 );
 
 -- Stream orders with soft delete flag
+-- Operation and source come from Kafka headers, not payload
 INSERT INTO iceberg_catalog.`default`.iceberg_orders_soft_delete
 SELECT
   id,
@@ -61,8 +77,19 @@ SELECT
   order_ts,
   amount,
   status,
-  is_deleted
-FROM default_catalog.default_database.orders_soft_delete;
+  is_deleted,                    -- From payload
+  operation,                     -- From Kafka header
+  source,                        -- From Kafka header
+  event_timestamp                -- From Kafka header
+FROM default_catalog.default_database.orders_soft_delete
+WHERE operation IS NOT NULL;     -- Only process events with operation header
 
 -- Note: dbt will create a view that filters out soft-deleted rows
 -- See: dbt/models/mart_orders_active.sql
+--
+-- Advantages:
+-- ✅ Preserves deletion history (data not destroyed)
+-- ✅ Can undelete by setting is_deleted=false
+-- ✅ Audit trail of why deleted (operation=DELETE in header)
+-- ✅ GDPR/compliance friendly (can prove deletion)
+-- ✅ Schema clean (operation not in data payload)
