@@ -1,0 +1,57 @@
+# Data Modifications Configuration
+#
+# This file defines modifications (UPDATE/DELETE) to be applied to Iceberg tables.
+# No manual SQL editing needed!
+#
+# Usage:
+#   python3 scripts/apply_data_modifications.py --config modifications.yaml --dry-run
+#   python3 scripts/apply_data_modifications.py --config modifications.yaml
+
+modifications:
+
+  # Example 1: GDPR - Delete all orders from a customer
+  - name: "GDPR: Delete customer cust_1001 data"
+    operation: DELETE
+    target_table: iceberg_catalog.`default`.iceberg_orders
+    filter_condition: "customer_id = 'cust_1001'"
+
+  # Example 2: Data Quality - Mark April orders as verified
+  - name: "Mark April 2026 orders as verified"
+    operation: UPDATE
+    target_table: iceberg_catalog.`default`.iceberg_orders
+    filter_condition: "order_ts >= TIMESTAMP '2026-04-01 00:00:00' AND order_ts < TIMESTAMP '2026-05-01 00:00:00'"
+    update_values: "status = 'verified'"
+
+  # Example 3: Compliance - Mask PII for old data
+  - name: "Mask PII: Encrypt customer IDs older than 1 year"
+    operation: UPDATE
+    target_table: iceberg_catalog.`default`.iceberg_orders
+    filter_condition: "order_ts < TIMESTAMP '2025-05-01 00:00:00'"
+    update_values: "customer_id = CONCAT('MASKED_', MD5(customer_id))"
+
+  # Example 4: Cleanup - Delete test data
+  - name: "Cleanup: Remove test orders"
+    operation: DELETE
+    target_table: iceberg_catalog.`default`.iceberg_orders
+    filter_condition: "customer_id LIKE 'test_%'"
+
+  # Example 5: Correction - Fix incorrect amounts
+  - name: "Fix: Correct negative amounts to zero"
+    operation: UPDATE
+    target_table: iceberg_catalog.`default`.iceberg_orders
+    filter_condition: "amount < 0"
+    update_values: "amount = 0.00"
+
+  # Example 6: Archival - Mark orders as archived
+  - name: "Archive: Mark 2024 orders as archived"
+    operation: UPDATE
+    target_table: iceberg_catalog.`default`.iceberg_orders
+    filter_condition: "order_ts >= TIMESTAMP '2024-01-01' AND order_ts < TIMESTAMP '2025-01-01'"
+    update_values: "status = 'archived'"
+
+  # Example 7: Multi-column update
+  - name: "Bulk update: Mark cancelled orders with zero amount"
+    operation: UPDATE
+    target_table: iceberg_catalog.`default`.iceberg_orders
+    filter_condition: "status = 'cancelled'"
+    update_values: "status = 'refunded', amount = 0.00"
