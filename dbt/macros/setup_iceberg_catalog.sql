@@ -3,7 +3,7 @@
 {% set sql %}
 CREATE CATALOG IF NOT EXISTS iceberg_catalog WITH (
   'type' = 'iceberg',
-  'warehouse' = 's3://flink-iceberg-warehouse/',
+  'warehouse' = '{{ env_var("ICEBERG_WAREHOUSE_PATH", "s3://flink-iceberg-warehouse/") }}',
   'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog',
   'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO'
 )

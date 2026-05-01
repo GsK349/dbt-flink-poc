@@ -6,7 +6,7 @@ SET 'execution.runtime-mode' = 'batch';
 -- Register Iceberg catalog
 CREATE CATALOG IF NOT EXISTS iceberg_catalog WITH (
   'type' = 'iceberg',
-  'warehouse' = 's3://flink-iceberg-warehouse/',
+  'warehouse' = '${ICEBERG_WAREHOUSE_PATH}',
   'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog',
   'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO'
 );

@@ -52,9 +52,16 @@ Thumbs.db
 # Environment & Credentials
 .env
 .env.aws
+.env.*
 .env.local
 .env.*.local
 aws-credentials.json
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
 
 # Docker
 docker-compose.override.yml

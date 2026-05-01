@@ -1,0 +1,12 @@
+variable "team_name"                { type = string }
+variable "aws_region"              { type = string }
+variable "flink_msaf_role_arn"     { type = string }
+variable "s3_warehouse_bucket"     { type = string }
+variable "flink_parallelism"       { type = number }
+variable "flink_parallelism_per_kpu"{ type = number }
+variable "kafka_bootstrap_servers" { type = string }
+variable "flink_job_jar_s3_path"   { type = string }
+variable "flink_sql_s3_path"       { type = string }
+variable "vpc_id"                  { type = string }
+variable "private_subnet_ids"      { type = list(string) }
+variable "flink_security_group_id" { type = string }

@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS orders_cdc_with_headers (
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'orders_topic',
-  'properties.bootstrap.servers' = 'kafka:9092',
+  'properties.bootstrap.servers' = '${KAFKA_BOOTSTRAP_SERVERS}',
   'scan.startup.mode' = 'earliest-offset',
   'format' = 'json',
   'json.timestamp-format.standard' = 'ISO-8601'
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS orders_cdc_with_headers (
 -- Step 2: Set up Iceberg catalog
 CREATE CATALOG IF NOT EXISTS iceberg_catalog WITH (
   'type' = 'iceberg',
-  'warehouse' = 's3://flink-iceberg-warehouse/',
+  'warehouse' = '${ICEBERG_WAREHOUSE_PATH}',
   'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog',
   'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO'
 );

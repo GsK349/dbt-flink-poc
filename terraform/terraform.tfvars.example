@@ -1,0 +1,32 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit real values.
+
+# ── Team identity ─────────────────────────────────────────────
+team_name   = "team-alpha"       # short slug, used to name all resources
+aws_region  = "us-east-1"
+aws_account = "123456789012"
+
+# ── Networking ────────────────────────────────────────────────
+vpc_cidr           = "10.1.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+# ── MSK (Kafka) ───────────────────────────────────────────────
+kafka_instance_type        = "kafka.m5.large"   # kafka.m5.4xlarge for production
+kafka_broker_count         = 3                  # must equal len(availability_zones)
+kafka_topics               = ["orders_topic"]
+kafka_partitions_per_topic = 6                  # sets Flink parallelism ceiling
+
+# ── MSAF (Apache Flink) ───────────────────────────────────────
+flink_parallelism         = 6   # keep equal to kafka_partitions_per_topic
+flink_parallelism_per_kpu = 1
+
+# ── Storage ───────────────────────────────────────────────────
+s3_warehouse_bucket = "team-alpha-flink-iceberg-warehouse"  # must be globally unique
+glue_database_name  = "default"
+
+# ── dbt schedule ─────────────────────────────────────────────
+dbt_schedule = "rate(15 minutes)"
+
+# ── Artifact paths (populated by CI/CD after build) ──────────
+# flink_job_jar_s3_path = "s3://team-alpha-flink-artifacts/v1.0.0/flink-job-all.jar"
+# flink_sql_s3_path     = "s3://team-alpha-flink-artifacts/v1.0.0/flink_kafka_to_iceberg.sql"

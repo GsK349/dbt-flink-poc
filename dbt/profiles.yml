@@ -1,5 +1,5 @@
 flink_iceberg:
-  target: dev
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
   outputs:
     dev:
       type: flink
@@ -9,3 +9,11 @@ flink_iceberg:
       database: default_catalog
       schema: default_database
       threads: 1
+    aws:
+      type: flink
+      host: "{{ env_var('FLINK_GATEWAY_HOST') }}"
+      port: 443
+      session_name: dbt_session
+      database: default_catalog
+      schema: default_database
+      threads: 4

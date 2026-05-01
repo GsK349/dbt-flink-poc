@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS orders_stream (
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'orders_topic',
-  'properties.bootstrap.servers' = 'kafka:9092',
+  'properties.bootstrap.servers' = '${KAFKA_BOOTSTRAP_SERVERS}',
   'scan.startup.mode' = 'earliest-offset',
   'format' = 'json',
   'json.timestamp-format.standard' = 'ISO-8601'

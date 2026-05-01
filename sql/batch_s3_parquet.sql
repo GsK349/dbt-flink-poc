@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS orders_from_s3 (
 -- Step 2: Set up Iceberg catalog
 CREATE CATALOG IF NOT EXISTS iceberg_catalog WITH (
   'type' = 'iceberg',
-  'warehouse' = 's3://flink-iceberg-warehouse/',
+  'warehouse' = '${ICEBERG_WAREHOUSE_PATH}',
   'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog',
   'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO'
 );

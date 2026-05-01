@@ -1,0 +1,10 @@
+variable "team_name"               { type = string }
+variable "aws_region"             { type = string }
+variable "aws_account"            { type = string }
+variable "vpc_id"                 { type = string }
+variable "private_subnet_ids"     { type = list(string) }
+variable "public_subnet_ids"      { type = list(string) }
+variable "ecs_task_role_arn"      { type = string }
+variable "kafka_bootstrap_servers"{ type = string }
+variable "s3_warehouse_bucket"    { type = string }
+variable "glue_database_name"     { type = string }

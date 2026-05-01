@@ -1,0 +1,16 @@
+FROM python:3.9-slim
+
+WORKDIR /project
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY dbt/ /dbt/
+COPY dbt_project.yml .
+COPY dbt/models/ ./dbt/models/
+COPY dbt/macros/ ./dbt/macros/
+
+ENV DBT_TARGET=aws
+
+ENTRYPOINT ["dbt"]
+CMD ["run", "--profiles-dir", "/dbt", "--project-dir", "/project", "--target", "aws"]
