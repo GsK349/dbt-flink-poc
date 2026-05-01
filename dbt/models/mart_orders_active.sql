@@ -14,5 +14,5 @@ SELECT
   order_ts,
   amount,
   status
-FROM iceberg_catalog.`default`.iceberg_orders_soft_delete
+FROM iceberg_catalog.`default`.iceberg_orders_soft_delete_v3
 WHERE is_deleted = FALSE  -- Show only active records

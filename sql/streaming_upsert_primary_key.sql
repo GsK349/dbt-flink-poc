@@ -26,18 +26,17 @@ SET 'execution.checkpointing.mode' = 'EXACTLY_ONCE';
 USE CATALOG default_catalog;
 USE default_database;
 
--- Kafka source with PRIMARY KEY
--- Flink will use 'id' to deduplicate and handle upserts
+-- Kafka source (PRIMARY KEY will be defined on the sink, not the source)
+-- Kafka JSON format doesn't support PRIMARY KEY constraints
 CREATE TABLE IF NOT EXISTS orders_upsert (
   id STRING,
   customer_id STRING,
   order_ts TIMESTAMP(3),
   amount DECIMAL(10,2),
-  status STRING,
-  PRIMARY KEY (id) NOT ENFORCED  -- Tell Flink: 'id' uniquely identifies a row
+  status STRING
 ) WITH (
   'connector' = 'kafka',
-  'topic' = 'orders_topic',
+  'topic' = 'orders_upsert',
   'properties.bootstrap.servers' = 'kafka:9092',
   'scan.startup.mode' = 'earliest-offset',
   'format' = 'json',
@@ -52,15 +51,17 @@ CREATE CATALOG IF NOT EXISTS iceberg_catalog WITH (
   'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO'
 );
 
--- Create Iceberg table with same PRIMARY KEY
+-- Create Iceberg table with PRIMARY KEY for upsert semantics
 CREATE TABLE IF NOT EXISTS iceberg_catalog.`default`.iceberg_orders_upsert (
   id STRING,
   customer_id STRING,
   order_ts TIMESTAMP(3),
   amount DECIMAL(10,2),
-  status STRING
+  status STRING,
+  PRIMARY KEY (id) NOT ENFORCED
 ) WITH (
-  'write.format.default' = 'parquet'
+  'write.format.default' = 'parquet',
+  'write.upsert.enabled' = 'true'
 );
 
 -- Stream orders with PRIMARY KEY based upsert

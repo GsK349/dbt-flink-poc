@@ -23,10 +23,10 @@ FROM (
     order_ts,
     amount,
     status,
-    op as latest_op,
-    event_ts as latest_event_ts,
-    ROW_NUMBER() OVER (PARTITION BY id ORDER BY event_ts DESC) as rn
+    operation as latest_op,
+    event_timestamp as latest_event_ts,
+    ROW_NUMBER() OVER (PARTITION BY id ORDER BY event_timestamp DESC) as rn
   FROM iceberg_catalog.`default`.iceberg_orders_cdc_log
-  WHERE op != 'DELETE'  -- Exclude deleted records
+  WHERE operation <> 'DELETE'  -- Exclude deleted records
 )
 WHERE rn = 1  -- Keep only latest version per order
