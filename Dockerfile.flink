@@ -1,4 +1,24 @@
 FROM apache/flink:1.20.1-scala_2.12
 
+# Add tooling needed for AWS workflows + SQL Gateway helpers
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-pip python3-venv jq curl awscli \
+ && python3 -m venv /opt/kafka-venv \
+ && /opt/kafka-venv/bin/pip install --no-cache-dir kafka-python aws-msk-iam-sasl-signer-python \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy Iceberg and connector jars into the Flink lib directory
 COPY lib/*.jar /opt/flink/lib/
+
+# Enable Flink S3 filesystem plugin (required by 'filesystem' connector with s3:// paths)
+RUN mkdir -p /opt/flink/plugins/s3-fs-hadoop \
+ && cp /opt/flink/opt/flink-s3-fs-hadoop-1.20.1.jar /opt/flink/plugins/s3-fs-hadoop/
+
+# Helper scripts for running SQL files and managing MSK topics
+COPY scripts/run_sql_via_gateway.sh /usr/local/bin/run_sql_via_gateway
+COPY scripts/start_flink_sql_gateway.sh /usr/local/bin/start_flink_sql_gateway
+COPY scripts/create_msk_topics.py /usr/local/bin/create_msk_topics
+RUN chmod +x /usr/local/bin/run_sql_via_gateway /usr/local/bin/start_flink_sql_gateway /usr/local/bin/create_msk_topics
+
+USER flink

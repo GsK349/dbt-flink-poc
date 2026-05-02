@@ -18,6 +18,14 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+  default_tags {
+    tags = {
+      Environment = "dev"
+      Owner       = "sai"
+      Project     = "dbt-Flink-PoC"
+      ManagedBy   = "Terraform"
+    }
+  }
 }
 
 module "networking" {
@@ -65,12 +73,14 @@ module "msaf" {
   s3_warehouse_bucket       = var.s3_warehouse_bucket
   flink_parallelism         = var.flink_parallelism
   flink_parallelism_per_kpu = var.flink_parallelism_per_kpu
-  kafka_bootstrap_servers   = module.msk.bootstrap_brokers_tls
+  kafka_bootstrap_servers   = module.msk.bootstrap_brokers_iam
   flink_job_jar_s3_path     = var.flink_job_jar_s3_path
   flink_sql_s3_path         = var.flink_sql_s3_path
   vpc_id                    = module.networking.vpc_id
   private_subnet_ids        = module.networking.private_subnet_ids
   flink_security_group_id   = module.networking.flink_security_group_id
+
+  depends_on = [module.iam]
 }
 
 module "ecs_sql_gateway" {
@@ -82,7 +92,7 @@ module "ecs_sql_gateway" {
   private_subnet_ids        = module.networking.private_subnet_ids
   public_subnet_ids         = module.networking.public_subnet_ids
   ecs_task_role_arn         = module.iam.ecs_task_role_arn
-  kafka_bootstrap_servers   = module.msk.bootstrap_brokers_tls
+  kafka_bootstrap_servers   = module.msk.bootstrap_brokers_iam
   s3_warehouse_bucket       = var.s3_warehouse_bucket
   glue_database_name        = var.glue_database_name
 }

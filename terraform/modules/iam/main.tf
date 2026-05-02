@@ -53,6 +53,20 @@ resource "aws_iam_role_policy" "msaf_policy" {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account}:secret:${var.team_name}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeVpcs",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:CreateNetworkInterface",
+          "ec2:CreateNetworkInterfacePermission",
+          "ec2:DeleteNetworkInterface",
+          "ec2:DescribeDhcpOptions"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -81,18 +95,52 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:ListBucket"]
-        Resource = ["arn:aws:s3:::${var.s3_warehouse_bucket}", "arn:aws:s3:::${var.s3_warehouse_bucket}/*"]
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
+        Resource = [
+          "arn:aws:s3:::${var.s3_warehouse_bucket}",
+          "arn:aws:s3:::${var.s3_warehouse_bucket}/*",
+          "arn:aws:s3:::${var.team_name}-flink-artifacts",
+          "arn:aws:s3:::${var.team_name}-flink-artifacts/*"
+        ]
       },
       {
         Effect   = "Allow"
-        Action   = ["glue:GetTable", "glue:GetTables", "glue:GetDatabase", "glue:GetDatabases", "glue:GetPartition", "glue:GetPartitions"]
+        Action   = ["glue:*"]
         Resource = ["arn:aws:glue:${var.aws_region}:${var.aws_account}:*"]
       },
       {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account}:secret:${var.team_name}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:Connect",
+          "kafka-cluster:AlterCluster",
+          "kafka-cluster:DescribeCluster",
+          "kafka-cluster:DescribeTopic",
+          "kafka-cluster:CreateTopic",
+          "kafka-cluster:DeleteTopic",
+          "kafka-cluster:AlterTopic",
+          "kafka-cluster:WriteData",
+          "kafka-cluster:ReadData",
+          "kafka-cluster:DescribeGroup",
+          "kafka-cluster:AlterGroup",
+          "kafka:GetBootstrapBrokers",
+          "kafka:DescribeCluster"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
       }
     ]
   })

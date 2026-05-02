@@ -38,29 +38,16 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   }
 }
 
-resource "aws_glue_catalog_database" "main" {
-  name        = var.glue_database_name
-  description = "Iceberg table metadata for ${var.team_name}"
-}
+# resource "aws_glue_catalog_database" "main" {
+#   name        = var.glue_database_name
+#   description = "Iceberg table metadata for ${var.team_name}"
+# }
 
 resource "aws_lakeformation_resource" "warehouse" {
   arn = aws_s3_bucket.warehouse.arn
 }
 
-resource "aws_lakeformation_permissions" "msaf_table" {
-  principal   = var.flink_msaf_role_arn
-  permissions = ["ALL"]
-  database {
-    name = aws_glue_catalog_database.main.name
-  }
-  depends_on = [aws_lakeformation_resource.warehouse]
-}
-
-resource "aws_lakeformation_permissions" "dbt_table" {
-  principal   = var.dbt_runner_role_arn
-  permissions = ["SELECT", "DESCRIBE", "ALTER"]
-  database {
-    name = aws_glue_catalog_database.main.name
-  }
-  depends_on = [aws_lakeformation_resource.warehouse]
-}
+# Lake Formation DB-level grants removed — IAM policies on flink_msaf_role and dbt_runner_role
+# provide the necessary access for this PoC without requiring LF admin setup.
+# resource "aws_lakeformation_permissions" "msaf_table" { ... }
+# resource "aws_lakeformation_permissions" "dbt_table" { ... }

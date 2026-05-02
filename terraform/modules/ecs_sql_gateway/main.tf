@@ -18,6 +18,24 @@ resource "aws_cloudwatch_log_group" "sql_gateway" {
   retention_in_days = 7
 }
 
+resource "aws_security_group" "ecs" {
+  name   = "${var.team_name}-sqlgw-ecs-sg"
+  vpc_id = var.vpc_id
+  ingress {
+    from_port   = 8083
+    to_port     = 8083
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/8"]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = { Name = "${var.team_name}-sqlgw-ecs-sg" }
+}
+
 resource "aws_ecs_task_definition" "sql_gateway" {
   family                   = "${var.team_name}-sql-gateway"
   requires_compatibilities = ["FARGATE"]
@@ -30,11 +48,13 @@ resource "aws_ecs_task_definition" "sql_gateway" {
   container_definitions = jsonencode([{
     name  = "sql-gateway"
     image = "${aws_ecr_repository.sql_gateway.repository_url}:latest"
+    command = ["start_flink_sql_gateway"]
     portMappings = [{ containerPort = 8083, protocol = "tcp" }]
     environment = [
       { name = "AWS_REGION",            value = var.aws_region },
       { name = "ICEBERG_WAREHOUSE_PATH",value = "s3://${var.s3_warehouse_bucket}/" },
-      { name = "GLUE_DATABASE",         value = var.glue_database_name }
+      { name = "GLUE_DATABASE",         value = var.glue_database_name },
+      { name = "FLINK_PROPERTIES",      value = "rest.address: 0.0.0.0\nrest.bind-address: 0.0.0.0\ntaskmanager.numberOfTaskSlots: 4" }
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -54,35 +74,33 @@ resource "aws_ecs_task_definition" "sql_gateway" {
   }])
 }
 
-resource "aws_ecs_service" "sql_gateway" {
-  name            = "${var.team_name}-sql-gateway"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.sql_gateway.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-
-  network_configuration {
-    subnets          = var.private_subnet_ids
-    security_groups  = [var.ecs_task_role_arn != "" ? aws_security_group_placeholder.placeholder.id : ""]
-    assign_public_ip = false
-  }
-
-  load_balancer {
-    target_group_arn = aws_lb_target_group.sql_gateway.arn
-    container_name   = "sql-gateway"
-    container_port   = 8083
-  }
-
-  depends_on = [aws_lb_listener.https]
-}
-
-# ALB for SQL Gateway
+# ALB for SQL Gateway — HTTP (port 8083) for internal VPC access.
+# For HTTPS, add an ACM certificate and change the listener to port 443/HTTPS.
 resource "aws_lb" "sql_gateway" {
   name               = "${var.team_name}-sqlgw-alb"
   internal           = true
   load_balancer_type = "application"
-  subnets            = var.public_subnet_ids
+  subnets            = var.private_subnet_ids
+  security_groups    = [aws_security_group.alb.id]
   tags               = { Team = var.team_name }
+}
+
+resource "aws_security_group" "alb" {
+  name   = "${var.team_name}-sqlgw-alb-sg"
+  vpc_id = var.vpc_id
+  ingress {
+    from_port   = 8083
+    to_port     = 8083
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/8"]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = { Name = "${var.team_name}-sqlgw-alb-sg" }
 }
 
 resource "aws_lb_target_group" "sql_gateway" {
@@ -101,17 +119,37 @@ resource "aws_lb_target_group" "sql_gateway" {
   }
 }
 
-resource "aws_lb_listener" "https" {
+resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.sql_gateway.arn
-  port              = 443
-  protocol          = "HTTPS"
-  # Teams must supply an ACM certificate ARN for their domain
-  certificate_arn   = "arn:aws:acm:${var.aws_region}:${var.aws_account}:certificate/REPLACE_WITH_CERT_ARN"
+  port              = 8083
+  protocol          = "HTTP"
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.sql_gateway.arn
   }
+}
+
+resource "aws_ecs_service" "sql_gateway" {
+  name            = "${var.team_name}-sql-gateway"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.sql_gateway.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.sql_gateway.arn
+    container_name   = "sql-gateway"
+    container_port   = 8083
+  }
+
+  depends_on = [aws_lb_listener.http]
 }
 
 # Auto-scaling for SQL Gateway ECS service
@@ -121,6 +159,7 @@ resource "aws_appautoscaling_target" "sql_gateway" {
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.sql_gateway.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+  depends_on         = [aws_ecs_service.sql_gateway]
 }
 
 resource "aws_appautoscaling_policy" "sql_gateway_cpu" {
@@ -138,24 +177,4 @@ resource "aws_appautoscaling_policy" "sql_gateway_cpu" {
     scale_in_cooldown  = 300
     scale_out_cooldown = 60
   }
-}
-
-# Placeholder SG reference — the real SG comes from networking module and is wired in via main.tf
-resource "aws_security_group" "placeholder" {}
-resource "aws_security_group" "sql_gateway_ecs" {
-  name   = "${var.team_name}-sqlgw-ecs-sg"
-  vpc_id = var.vpc_id
-  ingress {
-    from_port   = 8083
-    to_port     = 8083
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/8"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  tags = { Name = "${var.team_name}-sqlgw-ecs-sg" }
 }

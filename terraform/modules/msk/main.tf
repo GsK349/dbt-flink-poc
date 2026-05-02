@@ -3,6 +3,11 @@ resource "aws_msk_cluster" "main" {
   kafka_version          = "3.6.0"
   number_of_broker_nodes = var.kafka_broker_count
 
+  lifecycle {
+    prevent_destroy = false
+    ignore_changes  = [kafka_version, number_of_broker_nodes]
+  }
+
   broker_node_group_info {
     instance_type   = var.kafka_instance_type
     client_subnets  = var.private_subnet_ids
@@ -19,7 +24,6 @@ resource "aws_msk_cluster" "main" {
 
   client_authentication {
     sasl { iam = true }
-    tls {}
   }
 
   encryption_info {
@@ -38,7 +42,7 @@ resource "aws_msk_cluster" "main" {
     }
   }
 
-  logging {
+  logging_info {
     broker_logs {
       cloudwatch_logs {
         enabled   = true
@@ -57,7 +61,8 @@ resource "aws_cloudwatch_log_group" "msk" {
 
 # Store bootstrap servers in Secrets Manager for MSAF and ECS to consume
 resource "aws_secretsmanager_secret" "kafka_bootstrap" {
-  name = "${var.team_name}/kafka-bootstrap-servers"
+  name                    = "${var.team_name}/kafka-bootstrap-servers"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "kafka_bootstrap" {

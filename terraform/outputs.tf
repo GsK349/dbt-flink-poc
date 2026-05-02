@@ -14,10 +14,10 @@ output "s3_warehouse_path" {
   value       = "s3://${var.s3_warehouse_bucket}/"
 }
 
-output "glue_database_arn" {
-  description = "ARN of the Glue database holding Iceberg table metadata."
-  value       = module.storage.glue_database_arn
-}
+# output "glue_database_arn" {
+#   description = "ARN of the Glue database holding Iceberg table metadata."
+#   value       = module.storage.glue_database_arn
+# }
 
 output "ecr_sql_gateway_repository_url" {
   description = "ECR repository URL for the Flink SQL Gateway image."

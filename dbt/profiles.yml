@@ -12,7 +12,7 @@ flink_iceberg:
     aws:
       type: flink
       host: "{{ env_var('FLINK_GATEWAY_HOST') }}"
-      port: 443
+      port: 8083
       session_name: dbt_session
       database: default_catalog
       schema: default_database
