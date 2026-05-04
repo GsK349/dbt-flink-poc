@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flink + dbt + Iceberg — Streaming Analytics Pipeline</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css" id="theme">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+<style>
+  :root { --accent: #4ec9b0; --accent2: #c586c0; --warn: #dcdcaa; --muted: #9aa0a6; }
+  .reveal h1, .reveal h2, .reveal h3 { color: var(--accent); text-transform: none; letter-spacing: -0.5px; }
+  .reveal h1 { font-size: 2.2em; }
+  .reveal h2 { font-size: 1.6em; }
+  .reveal h3 { font-size: 1.2em; color: var(--accent2); }
+  .reveal section { text-align: left; }
+  .reveal section.center { text-align: center; }
+  .reveal pre { width: 100%; box-shadow: none; font-size: 0.55em; }
+  .reveal pre code { padding: 18px; border-radius: 8px; max-height: 480px; }
+  .reveal ul, .reveal ol { display: block; margin-left: 1em; }
+  .reveal li { margin-bottom: 0.4em; line-height: 1.35; }
+  .reveal small { color: var(--muted); font-size: 0.55em; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 14px 18px; }
+  .card h3 { margin-top: 0; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.65em; font-weight: 600; background: var(--accent); color: #111; margin-right: 6px; }
+  .pill.warn { background: var(--warn); }
+  .pill.alt { background: var(--accent2); color: #fff; }
+  .mermaid { background: #fff; border-radius: 8px; padding: 14px; }
+  .reveal table { font-size: 0.7em; border-collapse: collapse; width: 100%; }
+  .reveal table th, .reveal table td { border: 1px solid rgba(255,255,255,0.15); padding: 8px 12px; text-align: left; }
+  .reveal table th { background: rgba(78,201,176,0.15); color: var(--accent); }
+  .footer { position: absolute; bottom: 12px; right: 24px; font-size: 0.5em; color: var(--muted); }
+  .kbd { font-family: ui-monospace, monospace; background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+  .accent { color: var(--accent); }
+  .alt { color: var(--accent2); }
+  .warn { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 1. Title -->
+<section class="center">
+  <h1>Streaming Analytics on Flink + dbt + Iceberg</h1>
+  <p style="text-align:center;font-size:0.85em;color:var(--muted);">A unified batch &amp; streaming pipeline with SQL-as-code governance</p>
+  <p style="text-align:center;margin-top:60px;">
+    <span class="pill">Apache Flink</span>
+    <span class="pill alt">dbt</span>
+    <span class="pill">Apache Iceberg</span>
+    <span class="pill alt">AWS MSK</span>
+    <span class="pill">AWS Glue</span>
+  </p>
+  <p style="text-align:center;margin-top:80px;font-size:0.6em;color:var(--muted);">Engineering Leadership Review</p>
+</section>
+
+<!-- 2. The Problem -->
+<section>
+  <h2>The Problem We're Solving</h2>
+  <div class="two-col">
+    <div class="card">
+      <h3>Two worlds, two cost centers</h3>
+      <ul>
+        <li><strong>Batch analytics:</strong> dbt + warehouse. Great ergonomics, hours-stale data.</li>
+        <li><strong>Streaming:</strong> Flink/Kafka. Millisecond freshness, opaque jobs, no lineage.</li>
+        <li>Same metrics computed twice, prayed to agree.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What leadership keeps asking</h3>
+      <ul>
+        <li>Why don't the live and historical numbers match?</li>
+        <li>Who owns this Kafka topic? What depends on it?</li>
+        <li>Why does every new metric need a Java engineer?</li>
+        <li>Can we tell what changed between yesterday and today?</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:24px;"><span class="warn">→</span> The lambda architecture tax is real: <strong>2× pipelines, 2× teams, 2× drift</strong>.</p>
+</section>
+
+<!-- 3. Thesis -->
+<section class="center">
+  <h2>Thesis</h2>
+  <p style="font-size:1.3em;line-height:1.5;margin-top:40px;">
+    Combine <span class="accent">Flink's streaming engine</span> with <span class="alt">dbt's SQL governance layer</span>
+    to deliver <strong>real-time freshness with batch-analytics ergonomics</strong>
+    — one definition, one DAG, latency picked per model.
+  </p>
+</section>
+
+<!-- 4. Architecture -->
+<section>
+  <h2>Architecture</h2>
+  <div class="mermaid">
+flowchart LR
+  subgraph SRC[Sources]
+    APP[App / OLTP]
+    CDC[Debezium CDC]
+  end
+  subgraph STREAM[Streaming Plane]
+    MSK[(AWS MSK<br/>Kafka)]
+    FLINK[Flink SQL Gateway<br/>on ECS]
+  end
+  subgraph LAKE[Lakehouse]
+    ICE[(Iceberg Tables<br/>S3 + Glue Catalog)]
+  end
+  subgraph TRANSFORM[Transformation Layer]
+    DBT[dbt-flink-adapter<br/>Models &amp; Macros]
+  end
+  subgraph CONSUME[Consumers]
+    BI[BI / SQL Clients]
+    ML[ML Features]
+    APIS[Reverse-ETL APIs]
+  end
+  APP --> CDC --> MSK --> FLINK --> ICE
+  ICE <--> DBT
+  DBT --> BI
+  DBT --> ML
+  FLINK --> APIS
+
+  classDef green fill:#1f7a5a,stroke:#4ec9b0,color:#fff;
+  classDef purple fill:#5a2a6a,stroke:#c586c0,color:#fff;
+  class FLINK,MSK green;
+  class DBT,ICE purple;
+  </div>
+  <p style="margin-top:8px;"><small>Streaming plane writes append-only logs. Transformation layer projects current state.</small></p>
+</section>
+
+<!-- 5. Stack & responsibilities -->
+<section>
+  <h2>Stack &amp; Responsibilities</h2>
+  <table>
+    <tr><th>Layer</th><th>Tech</th><th>Owns</th></tr>
+    <tr><td>Ingest</td><td>Debezium → MSK (Kafka)</td><td>Capture every change as an event</td></tr>
+    <tr><td>Streaming compute</td><td>Apache Flink (SQL Gateway on ECS)</td><td>Continuous joins, enrichments, sinks</td></tr>
+    <tr><td>Storage / catalog</td><td>Apache Iceberg + S3 + Glue</td><td>ACID lakehouse, time travel, schema evolution</td></tr>
+    <tr><td>Transformation / governance</td><td>dbt + dbt-flink-adapter</td><td>Models, lineage, tests, docs, deploy</td></tr>
+    <tr><td>Orchestration</td><td>EventBridge → ECS task</td><td>Periodic dbt runs (15 min default)</td></tr>
+    <tr><td>Consumption</td><td>Athena / Trino / BI / ML</td><td>Read Iceberg directly — no copy</td></tr>
+  </table>
+</section>
+
+<!-- 6. Data Flow -->
+<section>
+  <h2>Data Flow — A Single Order</h2>
+  <ol>
+    <li><strong>OLTP write</strong> → row inserted in Postgres</li>
+    <li><strong>CDC capture</strong> → Debezium emits change event to MSK topic <span class="kbd">orders_topic</span></li>
+    <li><strong>Flink SQL job</strong> consumes Kafka, writes append-only event to Iceberg <span class="kbd">iceberg_orders_cdc_log</span></li>
+    <li><strong>dbt model</strong> <span class="kbd">mart_orders_cdc_current</span> projects "current state" via <span class="kbd">ROW_NUMBER() OVER (PARTITION BY id ORDER BY event_ts DESC)</span></li>
+    <li><strong>BI query</strong> reads the dbt view → sees the new order seconds after the OLTP write</li>
+  </ol>
+  <p style="margin-top:20px;"><span class="accent">End-to-end p95: ~5–10 seconds</span>. No batch window, no lambda drift, no second pipeline.</p>
+</section>
+
+<!-- 7. CDC pattern detail -->
+<section>
+  <h2>The CDC Pattern — Append-Only + Projection</h2>
+  <div class="two-col">
+    <div>
+      <h3>Why append-only?</h3>
+      <ul>
+        <li>Iceberg streaming writes work best as inserts</li>
+        <li>Full history retained — time travel for free</li>
+        <li>No row-level locks, no MERGE contention</li>
+        <li>Replays are deterministic</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Why project at read?</h3>
+      <ul>
+        <li>"Current state" is just a window function</li>
+        <li>Soft deletes = <span class="kbd">WHERE op &lt;&gt; 'DELETE'</span></li>
+        <li>Schema evolves without rewrites</li>
+        <li>Same log feeds many downstream marts</li>
+      </ul>
+    </div>
+  </div>
+  <pre><code class="language-sql">-- mart_orders_cdc_current.sql  (5 lines)
+{{ config(materialized='view') }}
+{{ cdc_current_state(
+    source_table="iceberg_catalog.`default`.iceberg_orders_cdc_log",
+    key_columns=['id'],
+    extra_columns=['customer_id', 'order_ts', 'amount', 'status']
+) }}</code></pre>
+</section>
+
+<!-- 8. Macro power -->
+<section>
+  <h2>Code Minimization via dbt Macros</h2>
+  <p>One reusable macro replaces dozens of hand-written CDC projections.</p>
+  <pre><code class="language-sql">{% macro cdc_current_state(source_table, key_columns, extra_columns,
+                            order_column='event_ts',
+                            op_column='op', delete_value='DELETE') %}
+SELECT {{ key_columns | join(', ') }}, {{ extra_columns | join(', ') }},
+       {{ op_column }} AS operation, {{ order_column }} AS last_modified_at
+FROM (
+  SELECT {{ key_columns | join(', ') }}, {{ extra_columns | join(', ') }},
+         {{ op_column }}, {{ order_column }},
+         ROW_NUMBER() OVER (PARTITION BY {{ key_columns | join(', ') }}
+                            ORDER BY {{ order_column }} DESC) AS rn
+  FROM {{ source_table }}
+  WHERE {{ op_column }} &lt;&gt; '{{ delete_value }}'
+)
+WHERE rn = 1
+{% endmacro %}</code></pre>
+  <p><span class="accent">Adding a new CDC table = one 5-line model file.</span> No SQL duplication, no drift.</p>
+</section>
+
+<!-- 9. The latency knob -->
+<section>
+  <h2>The Latency / Cost Knob — Per Model</h2>
+  <table>
+    <tr><th>Materialization</th><th>Freshness</th><th>Cost</th><th>Use For</th></tr>
+    <tr><td><span class="pill">streaming</span> <span class="kbd">table</span> + streaming job</td><td>Sub-second</td><td>$$$ (always-on Flink slot)</td><td>Live enrichments, alerting features</td></tr>
+    <tr><td><span class="pill alt">incremental</span></td><td>Minutes</td><td>$$ (periodic compute)</td><td>SCD2, hourly aggregates</td></tr>
+    <tr><td><span class="pill warn">view</span></td><td>Seconds (fresh-on-read)</td><td>$ (no compute until queried)</td><td>Most marts, BI projections</td></tr>
+  </table>
+  <p style="margin-top:24px;">Same dbt project, choice per model — change one config line to dial latency up or down.
+  <span class="accent">Hard to do without unifying both engines under one tool.</span></p>
+</section>
+
+<!-- 10. Real problems solved -->
+<section>
+  <h2>Complex Problems This Architecture Solves</h2>
+  <div class="three-col">
+    <div class="card">
+      <h3>1. Lambda death</h3>
+      <p>Same SQL runs as a Flink streaming job <em>and</em> a batch backfill. One source of truth.</p>
+    </div>
+    <div class="card">
+      <h3>2. Streaming governance</h3>
+      <p><span class="kbd">dbt docs</span> shows lineage from Kafka topic → Iceberg → mart. Tests run on streams.</p>
+    </div>
+    <div class="card">
+      <h3>3. CDC at scale</h3>
+      <p>Soft deletes, late data, dedup, SCD2 — all declarative via macros instead of bespoke jobs.</p>
+    </div>
+    <div class="card">
+      <h3>4. ML feature parity</h3>
+      <p>One feature definition serves both training (batch over Iceberg) and serving (streaming output).</p>
+    </div>
+    <div class="card">
+      <h3>5. Schema contracts</h3>
+      <p>dbt tests + freshness checks block deploys when an upstream Kafka schema change breaks downstream.</p>
+    </div>
+    <div class="card">
+      <h3>6. SQL-fluent ownership</h3>
+      <p>Analytics engineers own streaming pipelines. No Java, no Flink job submitter scripts.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 11. dbt as deployment layer -->
+<section>
+  <h2>dbt as Deployment Layer for Streaming</h2>
+  <p>Mental model shift: dbt doesn't <em>execute</em> streams — it <em>deploys</em> them.</p>
+  <pre><code class="language-sql">-- A streaming dbt model
+{{ config(
+    materialized='table',
+    execution_mode='streaming'
+) }}
+SELECT
+  o.id,
+  o.customer_id,
+  o.amount,
+  c.tier AS customer_tier,
+  o.amount * c.tier_multiplier AS adjusted_amount
+FROM {{ source('kafka', 'orders_topic') }}  o
+LEFT JOIN {{ ref('dim_customers') }}        c
+  ON o.customer_id = c.id</code></pre>
+  <ul>
+    <li><span class="kbd">dbt run</span> issues <span class="kbd">INSERT INTO sink SELECT ...</span> via Flink SQL Gateway</li>
+    <li>Flink picks it up as an unbounded job — runs forever</li>
+    <li>Re-deploys are version-controlled SQL changes, not Java repackages</li>
+  </ul>
+</section>
+
+<!-- 12. AWS deployment -->
+<section>
+  <h2>AWS Deployment Topology</h2>
+  <div class="mermaid">
+flowchart TB
+  subgraph VPC[VPC]
+    subgraph PUB[Public Subnet]
+      ALB[ALB / Internal LB]
+    end
+    subgraph PRIV[Private Subnets]
+      MSK[(MSK Kafka<br/>3× kafka.m5.large)]
+      ECS_FLINK[ECS Fargate<br/>Flink SQL Gateway]
+      ECS_DBT[ECS Fargate<br/>dbt task]
+    end
+  end
+  S3[(S3<br/>Iceberg warehouse)]
+  GLUE[Glue Catalog]
+  EB[EventBridge<br/>rate(15 min)]
+
+  ALB --> ECS_FLINK
+  ECS_FLINK --> MSK
+  ECS_FLINK --> S3
+  ECS_FLINK --> GLUE
+  EB --> ECS_DBT
+  ECS_DBT --> ECS_FLINK
+  ECS_DBT --> S3
+  ECS_DBT --> GLUE
+
+  classDef green fill:#1f7a5a,stroke:#4ec9b0,color:#fff;
+  classDef purple fill:#5a2a6a,stroke:#c586c0,color:#fff;
+  class ECS_FLINK,MSK green;
+  class ECS_DBT,S3,GLUE purple;
+  </div>
+  <p><small>Fully Terraform-managed (modules: <span class="kbd">msk</span>, <span class="kbd">storage</span>, <span class="kbd">iam</span>, <span class="kbd">ecs_sql_gateway</span>). Self-service per team via <span class="kbd">team_name</span> variable.</small></p>
+</section>
+
+<!-- 13. Tradeoffs / honesty -->
+<section>
+  <h2>Tradeoffs — What You Should Know</h2>
+  <ul>
+    <li><span class="warn">⚠</span> <strong>dbt-flink-adapter is community-maintained</strong> and version-locked (1.3.x). Less mature than dbt-snowflake/bigquery.</li>
+    <li><span class="warn">⚠</span> <strong>Streaming semantics still leak:</strong> watermarks, state TTL, checkpoints, exactly-once — Flink expertise still required.</li>
+    <li><span class="warn">⚠</span> <strong>dbt deploys, doesn't operate.</strong> Streaming jobs need separate lifecycle tooling (restart policies, monitoring, version checks).</li>
+    <li><span class="warn">⚠</span> <strong>Iceberg + streaming writes</strong> create small files — periodic compaction job is non-optional.</li>
+    <li><span class="warn">⚠</span> Some dbt features don't translate (snapshots, exposures, freshness on streams have rough edges).</li>
+    <li><span class="accent">✓</span> <strong>None of these are blockers</strong> — they're known operational gaps with known patterns.</li>
+  </ul>
+</section>
+
+<!-- 14. When NOT to use this -->
+<section>
+  <h2>When NOT to Use This Stack</h2>
+  <div class="two-col">
+    <div class="card">
+      <h3 class="warn">Skip if…</h3>
+      <ul>
+        <li>15-minute batch latency is acceptable everywhere</li>
+        <li>Team is Java-fluent and already owns Flink jobs</li>
+        <li>Volume &lt; 1M events/day (overkill)</li>
+        <li>You don't already use dbt</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 class="accent">Wins clearly if…</h3>
+      <ul>
+        <li>SQL-fluent analytics team owns the pipeline</li>
+        <li>Real-time needed <em>selectively</em>, not everywhere</li>
+        <li>You want one DAG across batch + streaming</li>
+        <li>CDC ingestion is on the roadmap</li>
+        <li>Lakehouse / Iceberg is already the storage choice</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 15. Roadmap -->
+<section>
+  <h2>Phased Rollout</h2>
+  <table>
+    <tr><th>Phase</th><th>Scope</th><th>Risk</th></tr>
+    <tr><td><strong>1. POC</strong> <small>(done)</small></td><td>One CDC source → Iceberg → dbt views. Local Flink + Docker.</td><td>Low</td></tr>
+    <tr><td><strong>2. AWS pilot</strong> <small>(now)</small></td><td>MSK + ECS Flink Gateway + scheduled dbt. One team, one source.</td><td>Low–Med</td></tr>
+    <tr><td><strong>3. Config-driven scale</strong></td><td>YAML table catalog + generator macros. New table = 5-line config.</td><td>Med</td></tr>
+    <tr><td><strong>4. Streaming materializations</strong></td><td>Selectively promote high-value marts to streaming jobs. Lifecycle tooling.</td><td>Med–High</td></tr>
+    <tr><td><strong>5. Multi-tenant</strong></td><td>Self-service Terraform per team. Shared Iceberg warehouse.</td><td>High</td></tr>
+  </table>
+  <p style="margin-top:20px;"><span class="accent">Each phase ships value independently.</span> No big-bang migration.</p>
+</section>
+
+<!-- 16. Cost shape -->
+<section>
+  <h2>Cost Shape</h2>
+  <div class="two-col">
+    <div class="card">
+      <h3>Always-on</h3>
+      <ul>
+        <li>MSK cluster (3× kafka.m5.large)</li>
+        <li>ECS Fargate Flink SQL Gateway</li>
+        <li>S3 storage (Iceberg warehouse)</li>
+        <li>Glue catalog requests</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Variable</h3>
+      <ul>
+        <li>ECS Fargate dbt task (15-min cadence)</li>
+        <li>Streaming job slots (scale with model count)</li>
+        <li>Athena / Trino query compute</li>
+        <li>S3 GET/PUT &amp; data transfer</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:24px;"><span class="accent">Largest lever:</span> how many models you promote from <span class="kbd">view</span> to <span class="kbd">streaming</span>. Default to view, promote on evidence.</p>
+</section>
+
+<!-- 17. Key takeaways -->
+<section class="center">
+  <h2>Key Takeaways</h2>
+  <ol style="display:inline-block;text-align:left;font-size:0.9em;margin-top:30px;">
+    <li><span class="accent">One DAG</span> spans batch and streaming — no lambda drift.</li>
+    <li><span class="accent">SQL-first</span> — analytics engineers own real-time pipelines.</li>
+    <li><span class="accent">Latency per model</span> — view, incremental, or streaming, all in one project.</li>
+    <li><span class="accent">CDC done right</span> — append-only logs + macro projections, no MERGE pain.</li>
+    <li><span class="accent">Governance for streams</span> — dbt lineage, tests, docs, contracts.</li>
+    <li><span class="warn">Operational gaps exist</span> — known and addressable, not blockers.</li>
+  </ol>
+</section>
+
+<!-- 18. Closing -->
+<section class="center">
+  <h1>Questions</h1>
+  <p style="margin-top:60px;color:var(--muted);">Repo: <span class="kbd">flink_dbt_poc</span> · branch <span class="kbd">aws_plan</span></p>
+</section>
+
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    transition: 'slide',
+    width: 1280,
+    height: 800,
+    margin: 0.06,
+    plugins: [ RevealHighlight, RevealNotes ]
+  });
+  Reveal.on('ready', () => mermaid.run({ querySelector: '.mermaid' }));
+  Reveal.on('slidechanged', () => mermaid.run({ querySelector: '.mermaid' }));
+</script>
+</body>
+</html>

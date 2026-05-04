@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pipeline Engineering Walkthrough — Flink + dbt + Iceberg</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css" id="theme">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+<style>
+  :root { --accent: #4ec9b0; --accent2: #c586c0; --warn: #dcdcaa; --muted: #9aa0a6; --danger: #f48771; }
+  .reveal h1, .reveal h2, .reveal h3 { color: var(--accent); text-transform: none; letter-spacing: -0.5px; }
+  .reveal h1 { font-size: 2em; }
+  .reveal h2 { font-size: 1.5em; }
+  .reveal h3 { font-size: 1.05em; color: var(--accent2); }
+  .reveal section { text-align: left; }
+  .reveal section.center { text-align: center; }
+  .reveal pre { width: 100%; box-shadow: none; font-size: 0.5em; }
+  .reveal pre code { padding: 16px; border-radius: 8px; max-height: 540px; }
+  .reveal ul, .reveal ol { display: block; margin-left: 1em; }
+  .reveal li { margin-bottom: 0.35em; line-height: 1.35; font-size: 0.85em; }
+  .reveal small { color: var(--muted); font-size: 0.55em; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px 16px; }
+  .card h3 { margin-top: 0; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.6em; font-weight: 600; background: var(--accent); color: #111; margin-right: 6px; }
+  .pill.warn { background: var(--warn); color: #111; }
+  .pill.alt { background: var(--accent2); color: #fff; }
+  .pill.danger { background: var(--danger); color: #fff; }
+  .mermaid { background: #fff; border-radius: 8px; padding: 12px; }
+  .reveal table { font-size: 0.65em; border-collapse: collapse; width: 100%; }
+  .reveal table th, .reveal table td { border: 1px solid rgba(255,255,255,0.15); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .reveal table th { background: rgba(78,201,176,0.15); color: var(--accent); }
+  .kbd { font-family: ui-monospace, monospace; background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 4px; font-size: 0.85em; color: var(--warn); }
+  .accent { color: var(--accent); }
+  .alt { color: var(--accent2); }
+  .warn { color: var(--warn); }
+  .danger { color: var(--danger); }
+  .filepath { font-family: ui-monospace, monospace; font-size: 0.55em; color: var(--muted); display: block; margin-top: -8px; margin-bottom: 8px; }
+  .sectionlabel { font-size: 0.6em; text-transform: uppercase; letter-spacing: 2px; color: var(--accent2); margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 1. Title -->
+<section class="center">
+  <h1>Pipeline Engineering Walkthrough</h1>
+  <p style="text-align:center;font-size:0.85em;color:var(--muted);margin-top:10px;">
+    Flink + dbt + Iceberg on AWS — how it actually works, end to end
+  </p>
+  <p style="text-align:center;margin-top:60px;">
+    <span class="pill">Apache Flink 1.20</span>
+    <span class="pill alt">dbt 1.3.7</span>
+    <span class="pill">Iceberg + Glue</span>
+    <span class="pill alt">MSK</span>
+    <span class="pill">ECS Fargate</span>
+  </p>
+  <p style="text-align:center;margin-top:80px;font-size:0.6em;color:var(--muted);">
+    Audience: data &amp; platform engineers · Repo: <span class="kbd">flink_dbt_poc</span> branch <span class="kbd">aws_plan</span>
+  </p>
+</section>
+
+<!-- 2. What you'll learn -->
+<section>
+  <h2>What you'll learn</h2>
+  <ol>
+    <li>The 3 planes (streaming / storage / transform) and which file does what</li>
+    <li>How a single record flows from producer → consumer</li>
+    <li>Every Flink SQL pattern in <span class="kbd">sql/</span> and when to use each</li>
+    <li>How dbt macros eliminate hand-written CDC SQL</li>
+    <li>How to deploy locally (compose) and to AWS (Terraform)</li>
+    <li>Common operational tasks: replays, schema changes, compaction, debugging</li>
+    <li>The 5 things that <em>will</em> bite you in production</li>
+  </ol>
+</section>
+
+<!-- 3. Mental model -->
+<section>
+  <h2>Mental model — three planes</h2>
+  <div class="mermaid">
+flowchart LR
+  PROD[Producers] --> MSK[(MSK Kafka)]
+  MSK --> FLINK[Flink SQL Gateway / MSAF]
+  FLINK --> ICE[(Iceberg on S3 + Glue)]
+  ICE <--> DBT[dbt models &amp; macros]
+  DBT --> CONS[Athena / Trino / BI / ML]
+
+  classDef stream fill:#1f7a5a,stroke:#4ec9b0,color:#fff;
+  classDef store fill:#3a4a6a,stroke:#7aa6ff,color:#fff;
+  classDef xform fill:#5a2a6a,stroke:#c586c0,color:#fff;
+  class MSK,FLINK stream;
+  class ICE store;
+  class DBT xform;
+  </div>
+  <ul>
+    <li><span class="accent">Streaming plane</span> writes append-only logs. Always-on.</li>
+    <li><span class="alt">Transform plane</span> projects current state. Scheduled (15 min).</li>
+    <li><span class="warn">Storage plane</span> is the source of truth read by everyone.</li>
+  </ul>
+</section>
+
+<!-- 4. Repo tour -->
+<section>
+  <h2>Repo tour — where things live</h2>
+  <pre><code class="language-bash">flink_dbt_poc/
+├── sql/                              # Hand-deployed Flink SQL jobs
+│   ├── flink_kafka_to_iceberg.sql           # Basic Kafka → Iceberg
+│   ├── streaming_cdc_op_field.sql           # CDC via Kafka headers
+│   ├── streaming_upsert_primary_key.sql     # Upsert with PK
+│   ├── streaming_soft_delete.sql            # Soft-delete pattern
+│   ├── batch_s3_partitioned_parquet.sql     # Batch ingestion
+│   └── iceberg_updates_examples.sql         # MERGE / DELETE examples
+├── dbt/
+│   ├── macros/
+│   │   ├── cdc_current_state.sql            # CDC log → current state
+│   │   ├── soft_delete_active.sql           # Soft-delete filter
+│   │   └── setup_iceberg_catalog.sql        # on-run-start hook
+│   └── models/
+│       ├── stg_orders.sql
+│       ├── mart_orders_cdc_current.sql      # 5-line model
+│       ├── mart_orders_active.sql           # 5-line model
+│       └── mart_orders_summary.sql
+├── scripts/
+│   ├── start_flink_sql_gateway.sh
+│   ├── run_sql_via_gateway.sh               # Submit SQL to gateway REST
+│   ├── create_msk_topics.py                 # IAM-SASL topic creation
+│   └── apply_data_modifications.py
+├── terraform/
+│   ├── main.tf
+│   ├── terraform.tfvars
+│   └── modules/
+│       ├── networking/  iam/  storage/
+│       ├── msk/         msaf/
+│       ├── ecs_sql_gateway/   ecs_dbt/
+├── Dockerfile.flink                  # Gateway image
+├── Dockerfile.dbt                    # dbt-flink-adapter image
+├── docker-compose.yml                # Local dev stack
+└── dbt_project.yml</code></pre>
+</section>
+
+<!-- 5. Trace one record -->
+<section>
+  <h2>Trace one record — INSERT for order id=1001</h2>
+  <ol>
+    <li><span class="accent">App writes to OLTP</span> → Postgres row inserted</li>
+    <li><span class="accent">Debezium emits</span> Kafka event to <span class="kbd">orders_topic</span><br/>
+      Headers: <span class="kbd">{operation: INSERT, source: order-service, timestamp: ...}</span><br/>
+      Body: <span class="kbd">{id: "1001", customer_id: "cust_1001", amount: 15.50, status: "created"}</span></li>
+    <li><span class="accent">Flink job</span> reads via <span class="kbd">METADATA FROM 'value.headers.operation'</span><br/>
+      Inserts into <span class="kbd">iceberg_orders_cdc_log</span> (append-only)</li>
+    <li><span class="accent">Iceberg</span> commits new snapshot via Flink checkpoint (10s)</li>
+    <li><span class="accent">dbt view</span> <span class="kbd">mart_orders_cdc_current</span> projects latest state per id<br/>
+      <span class="kbd">ROW_NUMBER() OVER (PARTITION BY id ORDER BY event_ts DESC) WHERE rn=1 AND op &lt;&gt; 'DELETE'</span></li>
+    <li><span class="accent">Athena query</span> hits the view → sees order 1001 within seconds</li>
+  </ol>
+  <p style="margin-top:18px;"><span class="warn">End-to-end p95: ~5–10 seconds.</span> No batch window, no second pipeline, no MERGE.</p>
+</section>
+
+<!-- 6. Pattern 1: Basic Kafka -> Iceberg -->
+<section>
+  <h2>Pattern 1 — Basic streaming Kafka → Iceberg</h2>
+  <span class="filepath">sql/flink_kafka_to_iceberg.sql</span>
+  <pre><code class="language-sql">SET 'execution.runtime-mode'           = 'streaming';
+SET 'execution.checkpointing.interval' = '10s';
+SET 'execution.checkpointing.mode'     = 'EXACTLY_ONCE';
+
+CREATE TABLE orders_stream (
+  id STRING, customer_id STRING, order_ts TIMESTAMP(3),
+  amount DECIMAL(10,2), status STRING
+) WITH (
+  'connector' = 'kafka',
+  'topic'     = 'orders_topic',
+  'properties.bootstrap.servers' = '${KAFKA_BOOTSTRAP_SERVERS}',
+  'scan.startup.mode' = 'earliest-offset',
+  'format'    = 'json'
+);
+
+CREATE CATALOG iceberg_catalog WITH (
+  'type'         = 'iceberg',
+  'warehouse'    = '${ICEBERG_WAREHOUSE_PATH}',
+  'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog',
+  'io-impl'      = 'org.apache.iceberg.aws.s3.S3FileIO'
+);
+
+CREATE TABLE iceberg_catalog.`default`.iceberg_orders (...)
+  WITH ('write.format.default' = 'parquet');
+
+INSERT INTO iceberg_catalog.`default`.iceberg_orders
+SELECT id, customer_id, order_ts, amount, status FROM orders_stream;</code></pre>
+  <p><small>Use when: you only need latest state and don't care about update history.</small></p>
+</section>
+
+<!-- 7. Pattern 2: CDC headers -->
+<section>
+  <h2>Pattern 2 — CDC with Kafka headers (recommended)</h2>
+  <span class="filepath">sql/streaming_cdc_op_field.sql</span>
+  <pre><code class="language-sql">CREATE TABLE orders_cdc_with_headers (
+  id STRING, customer_id STRING, order_ts TIMESTAMP(3),
+  amount DECIMAL(10,2), status STRING,
+  operation       STRING METADATA FROM 'value.headers.operation',
+  source          STRING METADATA FROM 'value.headers.source',
+  event_timestamp STRING METADATA FROM 'value.headers.timestamp',
+  WATERMARK FOR order_ts AS order_ts - INTERVAL '0' SECOND
+) WITH ( 'connector' = 'kafka', /* ... */ );
+
+CREATE TABLE iceberg_catalog.`default`.iceberg_orders_cdc_log (
+  id STRING, customer_id STRING, order_ts TIMESTAMP(3),
+  amount DECIMAL(10,2), status STRING,
+  operation STRING, source STRING, event_timestamp STRING,
+  ingested_at TIMESTAMP(3)
+);
+
+INSERT INTO iceberg_catalog.`default`.iceberg_orders_cdc_log
+SELECT id, customer_id, order_ts, amount, status,
+       operation, source, event_timestamp, CURRENT_TIMESTAMP
+FROM   orders_cdc_with_headers
+WHERE  operation IS NOT NULL;</code></pre>
+  <p><small>Use when: you need INSERT/UPDATE/DELETE history. Headers keep payload schema clean.</small></p>
+</section>
+
+<!-- 8. Pattern 3: Upsert -->
+<section>
+  <h2>Pattern 3 — Streaming upsert with primary key</h2>
+  <span class="filepath">sql/streaming_upsert_primary_key.sql</span>
+  <pre><code class="language-sql">CREATE TABLE iceberg_catalog.`default`.iceberg_orders_upsert (
+  id STRING,
+  customer_id STRING,
+  amount DECIMAL(10,2),
+  status STRING,
+  PRIMARY KEY (id) NOT ENFORCED
+) WITH (
+  'write.format.default'         = 'parquet',
+  'format-version'               = '2',
+  'write.upsert.enabled'         = 'true'
+);
+
+INSERT INTO iceberg_catalog.`default`.iceberg_orders_upsert
+SELECT id, customer_id, amount, status FROM orders_stream;</code></pre>
+  <p><small>Use when: you want Iceberg to handle deduplication itself (v2 row-level deletes). Higher write cost than append-only; benefits from PK-based pruning on read.</small></p>
+  <p><span class="warn">⚠ Tradeoff:</span> small files multiply faster — schedule compaction more aggressively.</p>
+</section>
+
+<!-- 9. Pattern 4: Soft delete -->
+<section>
+  <h2>Pattern 4 — Soft delete (GDPR-friendly)</h2>
+  <span class="filepath">sql/streaming_soft_delete.sql + dbt/models/mart_orders_active.sql</span>
+  <pre><code class="language-sql">-- Flink: write all rows including is_deleted flag
+CREATE TABLE iceberg_catalog.`default`.iceberg_orders_soft_delete (
+  id STRING, customer_id STRING, amount DECIMAL(10,2),
+  status STRING, is_deleted BOOLEAN
+);
+
+-- dbt: 5-line view selects only active rows
+{{ config(materialized='view') }}
+{{ soft_delete_active(
+    source_table="iceberg_catalog.`default`.iceberg_orders_soft_delete",
+    columns=['id', 'customer_id', 'order_ts', 'amount', 'status']
+) }}</code></pre>
+  <p><small>Use when: you need audit trail of deletions or can't hard-delete (regulatory). Pair with periodic purge job for true GDPR erasure.</small></p>
+</section>
+
+<!-- 10. Pattern 5: Batch -->
+<section>
+  <h2>Pattern 5 — Batch S3 → Iceberg backfill</h2>
+  <span class="filepath">sql/batch_s3_partitioned_parquet.sql</span>
+  <pre><code class="language-sql">SET 'execution.runtime-mode' = 'batch';
+
+CREATE TABLE s3_orders_parquet (
+  id STRING, customer_id STRING, order_ts TIMESTAMP(3),
+  amount DECIMAL(10,2), status STRING,
+  dt STRING -- partition column
+) PARTITIONED BY (dt) WITH (
+  'connector'  = 'filesystem',
+  'path'       = 's3://my-bucket/raw/orders/',
+  'format'     = 'parquet'
+);
+
+INSERT INTO iceberg_catalog.`default`.iceberg_orders
+SELECT id, customer_id, order_ts, amount, status
+FROM   s3_orders_parquet
+WHERE  dt BETWEEN '2026-01-01' AND '2026-04-30';</code></pre>
+  <p><small>Use when: backfilling history, replaying archived partitions, or recovering a corrupt streaming run. Same engine, same SQL — just <span class="kbd">execution.runtime-mode = batch</span>.</small></p>
+</section>
+
+<!-- 11. dbt macros -->
+<section>
+  <h2>dbt macro — the CDC projection</h2>
+  <span class="filepath">dbt/macros/cdc_current_state.sql</span>
+  <pre><code class="language-sql">{% macro cdc_current_state(source_table, key_columns, extra_columns,
+                            order_column='event_ts',
+                            op_column='op',
+                            delete_value='DELETE') %}
+SELECT {{ key_columns | join(', ') }},
+       {{ extra_columns | join(', ') }},
+       {{ op_column }} AS operation,
+       {{ order_column }} AS last_modified_at
+FROM (
+  SELECT {{ key_columns | join(', ') }},
+         {{ extra_columns | join(', ') }},
+         {{ op_column }},
+         {{ order_column }},
+         ROW_NUMBER() OVER (PARTITION BY {{ key_columns | join(', ') }}
+                            ORDER BY {{ order_column }} DESC) AS rn
+  FROM {{ source_table }}
+  WHERE {{ op_column }} &lt;&gt; '{{ delete_value }}'
+)
+WHERE rn = 1
+{% endmacro %}</code></pre>
+</section>
+
+<!-- 12. Adding a new table -->
+<section>
+  <h2>Adding a new CDC table = 5 lines</h2>
+  <span class="filepath">dbt/models/mart_customers_current.sql</span>
+  <pre><code class="language-sql">{{ config(materialized='view') }}
+
+{{ cdc_current_state(
+    source_table="iceberg_catalog.`default`.iceberg_customers_cdc_log",
+    key_columns=['customer_id'],
+    extra_columns=['name', 'email', 'tier']
+) }}</code></pre>
+  <p>Composite keys? Just pass a list:</p>
+  <pre><code class="language-sql">key_columns=['tenant_id', 'customer_id']</code></pre>
+  <p>Different op column? Override the default:</p>
+  <pre><code class="language-sql">op_column='cdc_op', delete_value='D'</code></pre>
+  <p><span class="accent">Result:</span> no hand-written window functions, no SQL drift, no copy-paste bugs.</p>
+</section>
+
+<!-- 13. Materialization knob -->
+<section>
+  <h2>Latency / cost knob — per model</h2>
+  <table>
+    <tr><th>Materialization</th><th>How</th><th>Freshness</th><th>Cost</th><th>Use for</th></tr>
+    <tr>
+      <td><span class="pill warn">view</span></td>
+      <td><span class="kbd">{{ config(materialized='view') }}</span></td>
+      <td>Seconds (fresh on read)</td>
+      <td>$ — no compute until queried</td>
+      <td>Most marts, BI projections</td>
+    </tr>
+    <tr>
+      <td><span class="pill alt">incremental</span></td>
+      <td><span class="kbd">materialized='incremental', unique_key='id'</span></td>
+      <td>Minutes (run cadence)</td>
+      <td>$$ — periodic compute</td>
+      <td>SCD2, hourly aggregates</td>
+    </tr>
+    <tr>
+      <td><span class="pill">streaming</span></td>
+      <td><span class="kbd">materialized='table', execution_mode='streaming'</span></td>
+      <td>Sub-second</td>
+      <td>$$$ — always-on Flink slot</td>
+      <td>Live enrichment, alerting features</td>
+    </tr>
+  </table>
+  <p style="margin-top:20px;"><span class="accent">Same project, different config block per model.</span> Promote on evidence — don't pre-optimize.</p>
+</section>
+
+<!-- 14. Local dev -->
+<section>
+  <h2>Local development — 60 seconds to running</h2>
+  <pre><code class="language-bash"># 1. Start the local stack (Kafka + Flink JM/TM + SQL Gateway + dbt)
+docker compose up -d
+
+# 2. Submit a streaming SQL job
+./scripts/run_sql_via_gateway.sh --file sql/flink_kafka_to_iceberg.sql
+
+# 3. Produce a few sample events
+./scripts/produce_sample_orders.sh
+
+# 4. Run dbt models against the local gateway
+docker compose run --rm dbt run --target dev
+
+# 5. Inspect the result
+docker compose exec sql-gateway curl -s \
+  -X POST http://localhost:8083/v1/sessions \
+  -H 'Content-Type: application/json' -d '{}'</code></pre>
+  <p><small>Compose target = <span class="kbd">localhost:8083</span>. AWS target = <span class="kbd">$FLINK_GATEWAY_HOST:8083</span>.</small></p>
+</section>
+
+<!-- 15. AWS deploy -->
+<section>
+  <h2>AWS deploy — Terraform module wiring</h2>
+  <div class="mermaid">
+flowchart LR
+  NET[networking] --> MSK[msk]
+  NET --> ECSGW[ecs_sql_gateway]
+  NET --> ECSDBT[ecs_dbt]
+  NET --> MSAF[msaf]
+  IAM[iam] --> STORAGE[storage]
+  IAM --> MSAF
+  IAM --> ECSGW
+  IAM --> ECSDBT
+  STORAGE -.-> MSAF
+  STORAGE -.-> ECSGW
+  STORAGE -.-> ECSDBT
+  MSK -.-> MSAF
+  MSK -.-> ECSGW
+  ECSGW -.-> ECSDBT
+
+  classDef base fill:#3a4a6a,stroke:#7aa6ff,color:#fff;
+  classDef compute fill:#1f7a5a,stroke:#4ec9b0,color:#fff;
+  class NET,IAM,STORAGE base;
+  class MSK,MSAF,ECSGW,ECSDBT compute;
+  </div>
+  <pre><code class="language-bash">cd terraform/
+cp terraform.tfvars.example terraform.tfvars  # edit team_name, account, etc.
+terraform init
+terraform plan
+terraform apply</code></pre>
+</section>
+
+<!-- 16. tfvars -->
+<section>
+  <h2>Single config file deploys everything</h2>
+  <span class="filepath">terraform/terraform.tfvars</span>
+  <pre><code class="language-hcl">team_name   = "sai-flink"
+aws_region  = "us-east-1"
+aws_account = "&lt;account-id&gt;"
+
+vpc_cidr           = "10.1.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+kafka_instance_type        = "kafka.m5.large"
+kafka_broker_count         = 3
+kafka_topics               = ["orders_topic"]
+kafka_partitions_per_topic = 6
+
+flink_parallelism          = 6
+flink_parallelism_per_kpu  = 1
+
+s3_warehouse_bucket = "&lt;team&gt;-flink-iceberg-warehouse-&lt;account&gt;"
+glue_database_name  = "default"
+
+dbt_schedule = "rate(15 minutes)"</code></pre>
+  <p><span class="accent">One file → one team's complete environment.</span> No hand-edits to module code needed.</p>
+</section>
+
+<!-- 17. SQL Gateway internals -->
+<section>
+  <h2>How the SQL Gateway runs on ECS</h2>
+  <span class="filepath">terraform/modules/ecs_sql_gateway/main.tf</span>
+  <ul>
+    <li>Image: <span class="kbd">apache/flink:1.20.1-scala_2.12</span> + Iceberg/Glue/S3 jars baked in</li>
+    <li>Fargate task: <strong>2 vCPU / 4 GB</strong>, <span class="kbd">taskmanager.numberOfTaskSlots: 4</span></li>
+    <li>Internal ALB on port <span class="kbd">8083</span>; health check <span class="kbd">GET /v1/info</span></li>
+    <li>Auto-scale 1–5 replicas on CPU &gt; 60%</li>
+    <li>CloudWatch logs at <span class="kbd">/ecs/&lt;team&gt;/sql-gateway</span> (7-day retention)</li>
+    <li>Task role grants: MSK IAM-SASL, S3 warehouse, Glue catalog</li>
+  </ul>
+  <pre><code class="language-bash"># Submit to the AWS gateway (same script, different env)
+GATEWAY=http://${FLINK_GATEWAY_HOST}:8083 \
+  ./scripts/run_sql_via_gateway.sh --file sql/streaming_cdc_op_field.sql</code></pre>
+</section>
+
+<!-- 18. dbt scheduled runs -->
+<section>
+  <h2>How dbt runs on a schedule</h2>
+  <span class="filepath">terraform/modules/ecs_dbt/</span>
+  <ul>
+    <li>Image: <span class="kbd">Dockerfile.dbt</span> — dbt-core 1.3.7 + dbt-flink-adapter 1.3.11</li>
+    <li>EventBridge Scheduler triggers ECS RunTask every <span class="kbd">${dbt_schedule}</span> (default 15 min)</li>
+    <li>Container env: <span class="kbd">DBT_TARGET=aws</span>, <span class="kbd">FLINK_GATEWAY_HOST=&lt;alb-dns&gt;</span></li>
+    <li>Connects to gateway via internal ALB, submits compiled SQL via REST</li>
+    <li>Run results land in CloudWatch Logs; failures alarm via metric filter</li>
+  </ul>
+  <p><span class="warn">Note:</span> for streaming materializations, <span class="kbd">dbt run</span> deploys jobs but doesn't manage their lifecycle — that's the next milestone (job registry + version-hash check).</p>
+</section>
+
+<!-- 19. Iceberg ops -->
+<section>
+  <h2>Iceberg — what to know operationally</h2>
+  <div class="two-col">
+    <div class="card">
+      <h3>You get for free</h3>
+      <ul>
+        <li>ACID writes on S3</li>
+        <li>Schema evolution (add/drop/rename) without rewrites</li>
+        <li>Time travel by snapshot ID or timestamp</li>
+        <li>Hidden partitioning (no partition column maintenance)</li>
+        <li>Multi-engine reads (Flink, Trino, Athena, Spark)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>You must operate</h3>
+      <ul>
+        <li><span class="kbd">rewrite_data_files</span> — compaction (small file problem)</li>
+        <li><span class="kbd">expire_snapshots</span> — bound metadata growth</li>
+        <li><span class="kbd">remove_orphan_files</span> — clean failed writes</li>
+        <li>Glue catalog access control (Lake Formation if multi-team)</li>
+      </ul>
+    </div>
+  </div>
+  <pre><code class="language-sql">-- Run periodically (Spark on EMR Serverless, or Flink batch)
+CALL iceberg_catalog.system.rewrite_data_files('default.iceberg_orders_cdc_log');
+CALL iceberg_catalog.system.expire_snapshots('default.iceberg_orders_cdc_log',
+  TIMESTAMP '2026-04-01 00:00:00');</code></pre>
+</section>
+
+<!-- 20. Common ops -->
+<section>
+  <h2>Common operational tasks</h2>
+  <table>
+    <tr><th>Task</th><th>How to do it</th></tr>
+    <tr><td>Add a new Kafka topic</td><td>Add to <span class="kbd">kafka_topics</span> in tfvars; <span class="kbd">terraform apply</span>; create matching Flink source SQL</td></tr>
+    <tr><td>Add a new mart</td><td>Drop a 5-line file in <span class="kbd">dbt/models/</span> using <span class="kbd">cdc_current_state()</span>; next dbt run picks it up</td></tr>
+    <tr><td>Replay last N hours</td><td>Reset Kafka offsets, restart streaming job; design downstream views to be idempotent over event_ts</td></tr>
+    <tr><td>Add a column to a CDC log</td><td><span class="kbd">ALTER TABLE iceberg_orders_cdc_log ADD COLUMNS (new_col STRING)</span>; update Flink SQL; restart job</td></tr>
+    <tr><td>GDPR delete a customer</td><td>Emit DELETE event(s); soft-delete view stops returning them; periodic purge job hard-deletes from log</td></tr>
+    <tr><td>Promote a view to streaming</td><td>Change <span class="kbd">config()</span> to <span class="kbd">materialized='table', execution_mode='streaming'</span></td></tr>
+    <tr><td>Debug a failing dbt model</td><td><span class="kbd">dbt compile -s &lt;model&gt;</span> → check rendered SQL → submit via gateway directly</td></tr>
+  </table>
+</section>
+
+<!-- 21. Troubleshooting -->
+<section>
+  <h2>Troubleshooting playbook</h2>
+  <table>
+    <tr><th>Symptom</th><th>First check</th><th>Likely cause</th></tr>
+    <tr><td>Flink job stuck "RUNNING" but no Iceberg snapshots</td><td>JobManager logs · checkpoint history</td><td>Checkpoint failures (S3 perms, KMS, network)</td></tr>
+    <tr><td>dbt: "catalog 'iceberg_catalog' not found"</td><td><span class="kbd">on-run-start</span> hook output</td><td>Session not retaining catalog; rerun setup macro</td></tr>
+    <tr><td>Athena query slow on CDC view</td><td><span class="kbd">EXPLAIN</span> · partition pruning</td><td>Too many small files → run <span class="kbd">rewrite_data_files</span></td></tr>
+    <tr><td>Kafka consumer lag growing</td><td>MSK <span class="kbd">MaxOffsetLag</span> metric</td><td>Parallelism &lt; partition count, or Flink TM under-provisioned</td></tr>
+    <tr><td>Schema mismatch errors</td><td>Glue table schema vs Flink DDL</td><td>Iceberg evolved but Flink DDL stale; restart job</td></tr>
+    <tr><td>Duplicate rows in current-state view</td><td>Inner subquery row count</td><td>event_ts not monotonic; check producer timestamps</td></tr>
+  </table>
+</section>
+
+<!-- 22. The 5 things -->
+<section>
+  <h2>5 things that <span class="danger">will</span> bite you</h2>
+  <ol>
+    <li><span class="danger">Small file problem.</span> Streaming writes = thousands of tiny Parquet files. Compaction is not optional — schedule it from day one.</li>
+    <li><span class="danger">Streaming job lifecycle.</span> dbt deploys jobs, doesn't manage them. <span class="kbd">dbt run</span> twice = two jobs unless you guard for it.</li>
+    <li><span class="danger">Watermark misconfig.</span> Late events get dropped silently. Always set <span class="kbd">WATERMARK FOR ts AS ts - INTERVAL '5' SECOND</span> based on your producer's clock skew.</li>
+    <li><span class="danger">Adapter version lock.</span> dbt-flink-adapter is pinned to dbt-core 1.3.x. Don't bump dbt-core without checking adapter compatibility.</li>
+    <li><span class="danger">Glue catalog rate limits.</span> Heavy parallelism × Iceberg metadata = throttled Glue API calls. Cache catalog access in long-running jobs.</li>
+  </ol>
+</section>
+
+<!-- 23. Where to go next -->
+<section>
+  <h2>Where to look next</h2>
+  <ul>
+    <li><span class="kbd">docs/TECHNICAL_DESIGN.md</span> — full architecture reference</li>
+    <li><span class="kbd">docs/presentation.html</span> — leadership-facing deck</li>
+    <li><span class="kbd">PIPELINE_EXPLAINER.md</span> — narrative walkthrough</li>
+    <li><span class="kbd">STREAMING_CDC_UPSERTS.md</span> — CDC pattern deep dive</li>
+    <li><span class="kbd">KAFKA_HEADERS_FOR_CDC.md</span> — header-driven CDC details</li>
+    <li><span class="kbd">ICEBERG_UPDATES_DELETES.md</span> — mutable table patterns</li>
+    <li><span class="kbd">SCALABLE_DATA_MODIFICATIONS.md</span> — periodic UPDATE/DELETE batches</li>
+    <li><span class="kbd">GDPR_DATA_RETENTION.md</span> — PII handling</li>
+    <li><span class="kbd">DEBUGGING_SUMMARY.md</span> — known issues + fixes</li>
+    <li><span class="kbd">AWS_PIPELINE_RUN_REPORT.md</span> — last successful AWS run</li>
+  </ul>
+</section>
+
+<!-- 24. Closing -->
+<section class="center">
+  <h1>Questions / Pairing</h1>
+  <p style="margin-top:50px;color:var(--muted);">Repo: <span class="kbd">flink_dbt_poc</span> · branch <span class="kbd">aws_plan</span></p>
+  <p style="margin-top:6px;color:var(--muted);">Local: <span class="kbd">docker compose up</span> · AWS: <span class="kbd">terraform apply</span></p>
+</section>
+
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    transition: 'slide',
+    width: 1280,
+    height: 800,
+    margin: 0.06,
+    plugins: [ RevealHighlight, RevealNotes ]
+  });
+  Reveal.on('ready', () => mermaid.run({ querySelector: '.mermaid' }));
+  Reveal.on('slidechanged', () => mermaid.run({ querySelector: '.mermaid' }));
+</script>
+</body>
+</html>
