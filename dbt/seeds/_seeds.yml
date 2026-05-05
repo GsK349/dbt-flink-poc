@@ -1,0 +1,31 @@
+version: 2
+
+# ─────────────────────────────────────────────────────────
+# DEMO: SEEDS
+#   - small CSV files become tables via `dbt seed`
+#   - perfect for lookup/reference data (status codes,
+#     country lists, exchange rates, feature flags)
+#   - tested + documented like any other model
+# ─────────────────────────────────────────────────────────
+
+seeds:
+  - name: order_status_codes
+    description: "Lookup of valid order statuses + display labels"
+    config:
+      column_types:
+        is_terminal: boolean
+        sort_order:  int
+    columns:
+      - name: status_code
+        description: "Code as it appears in the orders table"
+        tests:
+          - unique
+          - not_null
+      - name: status_label
+        description: "Human-friendly label for dashboards"
+        tests:
+          - not_null
+      - name: is_terminal
+        description: "True if the order cannot transition further"
+        tests:
+          - not_null

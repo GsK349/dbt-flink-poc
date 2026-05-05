@@ -1,1 +1,67 @@
 version: 2
+
+# ─────────────────────────────────────────────────────────
+# DEMO: SOURCES
+#   - declares upstream Iceberg tables once
+#   - enables {{ source('iceberg', 'iceberg_orders') }} refs
+#   - freshness checks fail CI if the stream falls behind
+#   - column-level tests run during `dbt test`
+# ─────────────────────────────────────────────────────────
+
+sources:
+  - name: iceberg
+    description: "Iceberg tables in the Glue catalog, written by Flink jobs"
+    database: iceberg_catalog
+    schema: default
+    tables:
+
+      - name: iceberg_orders
+        identifier: iceberg_orders
+        description: "Upserted orders table — current state per order_id"
+        loaded_at_field: order_ts
+        freshness:
+          warn_after:  { count: 5,  period: minute }
+          error_after: { count: 30, period: minute }
+        columns:
+          - name: id
+            description: "Primary key — order identifier"
+            tests:
+              - not_null
+              - unique
+          - name: customer_id
+            description: "FK to customer dimension"
+            tests:
+              - not_null
+          - name: amount
+            description: "Order total in dollars"
+            tests:
+              - not_null
+              - positive_value          # custom generic test, see tests/generic/
+          - name: status
+            description: "Order lifecycle state"
+            tests:
+              - accepted_values:
+                  values: ['CREATED', 'PAID', 'SHIPPED', 'DELIVERED', 'CANCELLED']
+
+      - name: iceberg_orders_cdc_log
+        description: "Append-only CDC events from MSK orders_topic"
+        loaded_at_field: event_ts
+        freshness:
+          warn_after:  { count: 2,  period: minute }
+          error_after: { count: 10, period: minute }
+        columns:
+          - name: id
+            tests: [not_null]
+          - name: op
+            description: "CDC operation: INSERT / UPDATE / DELETE"
+            tests:
+              - accepted_values:
+                  values: ['INSERT', 'UPDATE', 'DELETE', 'I', 'U', 'D']
+
+      - name: iceberg_orders_soft_delete
+        description: "Orders table with is_deleted flag for GDPR soft-delete pattern"
+        columns:
+          - name: id
+            tests: [not_null]
+          - name: is_deleted
+            tests: [not_null]

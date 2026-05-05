@@ -1,0 +1,7 @@
+status_code,status_label,is_terminal,sort_order
+CREATED,Order placed,false,1
+PAID,Payment received,false,2
+SHIPPED,In transit,false,3
+DELIVERED,Delivered to customer,true,4
+CANCELLED,Cancelled by customer,true,5
+REFUNDED,Refund issued,true,6

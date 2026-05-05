@@ -1,0 +1,74 @@
+version: 2
+
+# ─────────────────────────────────────────────────────────
+# DEMO: MODEL TESTS + DOCUMENTATION
+#   - schema-level tests run via `dbt test`
+#   - descriptions appear in `dbt docs serve`
+#   - meta tags carry ownership / PII info into the catalog
+# ─────────────────────────────────────────────────────────
+
+models:
+
+  - name: stg_orders
+    description: |
+      Cleaned staging view over the Iceberg orders table.
+      One row per order_id (latest state).
+    meta:
+      owner: "data-team@nbp.com"
+      contains_pii: false
+    columns:
+      - name: id
+        description: "Order identifier — primary key"
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        tests:
+          - not_null
+      - name: amount
+        tests:
+          - not_null
+      - name: status
+        tests:
+          - accepted_values:
+              values: ['CREATED', 'PAID', 'SHIPPED', 'DELIVERED', 'CANCELLED']
+
+  - name: mart_orders_cdc_current
+    description: |
+      Current-state projection from the append-only CDC log.
+      Uses the `cdc_current_state` macro to dedup per id and exclude deletes.
+    columns:
+      - name: id
+        tests:
+          - not_null
+          - unique
+      - name: operation
+        tests:
+          - not_null
+
+  - name: mart_orders_active
+    description: |
+      Active orders only — excludes soft-deleted rows.
+      Uses the `soft_delete_active` macro.
+    columns:
+      - name: id
+        tests:
+          - not_null
+          - unique
+
+  - name: mart_orders_summary
+    description: "Per-customer per-day order aggregates"
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+      - name: order_date
+        tests:
+          - not_null
+      - name: order_count
+        tests:
+          - not_null
+          - positive_value
+      - name: total_amount
+        tests:
+          - not_null

@@ -2,14 +2,63 @@ name: flink_dbt_poc
 version: '1.0'
 config-version: 2
 profile: flink_iceberg
-model-paths: ["dbt/models"]
-macro-paths: ["dbt/macros"]
+
+# ─────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────
+model-paths:    ["dbt/models"]
+macro-paths:    ["dbt/macros"]
+seed-paths:     ["dbt/seeds"]            # DEMO: seeds enabled
+snapshot-paths: ["dbt/snapshots"]        # DEMO: snapshots enabled
 analysis-paths: ["analysis"]
-test-paths: ["tests"]
-target-path: "target"
+test-paths:     ["tests"]
+target-path:    "target"
+
 clean-targets:
   - "target"
   - "dbt_modules"
+  - "dbt_packages"
 
+# ─────────────────────────────────────────────────────────
+# DEMO: PROJECT-LEVEL VARIABLES (overridable at the CLI)
+#   dbt run --vars '{"start_date": "2026-01-01"}'
+# ─────────────────────────────────────────────────────────
+vars:
+  start_date: '2024-01-01'
+  pii_masked: true
+  iceberg_warehouse: "{{ env_var('S3_BUCKET', 's3://flink-iceberg-warehouse/') }}"
+
+# ─────────────────────────────────────────────────────────
+# DEMO: HOOKS — SQL run around every dbt invocation / model
+# ─────────────────────────────────────────────────────────
 on-run-start:
   - "{{ setup_iceberg_catalog() }}"
+  - "{{ log('▸ dbt run starting against ' ~ target.name, info=True) }}"
+
+on-run-end:
+  - "{{ log('✓ dbt run finished — ' ~ results | length ~ ' nodes', info=True) }}"
+
+# ─────────────────────────────────────────────────────────
+# DEMO: FOLDER-LEVEL MODEL CONFIG
+#   - inherited by every model in the folder
+#   - overridable per-model via {{ config(...) }}
+# ─────────────────────────────────────────────────────────
+models:
+  flink_dbt_poc:
+    +materialized: view                   # default for all models
+
+    marts:
+      +materialized: table                # marts are always tables
+      +tags: ["nightly", "marts"]
+      +post-hook: "-- DEMO: folder hook fires after every mart build"
+      # in production you might compact here:
+      # +post-hook: "{{ compact_iceberg_table(this.name) }}"
+
+seeds:
+  flink_dbt_poc:
+    +schema: reference                    # all seeds land in a 'reference' schema
+    +quote_columns: false
+
+snapshots:
+  flink_dbt_poc:
+    +target_schema: snapshots

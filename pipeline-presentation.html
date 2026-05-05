@@ -1,0 +1,2303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Two Pipelines, One Lake — Flink × dbt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,800&family=JetBrains+Mono:wght@300;400;500;700&family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,600&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --ink:        #0a1628;
+  --ink-2:      #122236;
+  --ink-3:      #1a2f47;
+  --paper:      #f5e9d4;
+  --paper-dim:  rgba(245,233,212,0.55);
+  --paper-mute: rgba(245,233,212,0.32);
+  --amber:      #f4a020;
+  --amber-soft: #f6c66e;
+  --mint:       #4ec5a5;
+  --coral:      #e85d75;
+  --steel:      #6b89a8;
+  --grid:       rgba(245,233,212,0.045);
+  --grid-bold:  rgba(245,233,212,0.12);
+
+  --serif:    'Fraunces', 'Newsreader', Georgia, serif;
+  --body:     'Newsreader', Georgia, serif;
+  --mono:     'JetBrains Mono', 'Menlo', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--body);
+  font-size: 16px;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    linear-gradient(var(--grid-bold) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-bold) 1px, transparent 1px);
+  background-size: 32px 32px, 32px 32px, 160px 160px, 160px 160px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(244,160,32,0.08), transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(78,197,165,0.06), transparent 50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ── DECK ─────────────────────────────────────────── */
+.deck {
+  position: relative;
+  width: 100vw; height: 100vh;
+  display: flex;
+  transition: transform 0.85s cubic-bezier(0.76, 0, 0.24, 1);
+  z-index: 3;
+}
+
+.slide {
+  flex: 0 0 100vw;
+  height: 100vh;
+  padding: 5vh 6vw;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide.active .reveal {
+  animation: reveal 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.slide.active .reveal-1 { animation-delay: 0.10s; }
+.slide.active .reveal-2 { animation-delay: 0.22s; }
+.slide.active .reveal-3 { animation-delay: 0.34s; }
+.slide.active .reveal-4 { animation-delay: 0.46s; }
+.slide.active .reveal-5 { animation-delay: 0.58s; }
+.slide.active .reveal-6 { animation-delay: 0.70s; }
+
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(18px); filter: blur(4px); }
+  to   { opacity: 1; transform: translateY(0);    filter: blur(0); }
+}
+
+/* ── HEADER STRIPE ────────────────────────────────── */
+.slide-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-mute);
+  border-bottom: 1px dashed var(--paper-mute);
+  padding-bottom: 0.6rem;
+  margin-bottom: 2.5rem;
+}
+.slide-header .tag-num { color: var(--amber); }
+.slide-header .tag-section { color: var(--paper-dim); }
+
+/* ── TYPOGRAPHY ───────────────────────────────────── */
+h1.eyebrow {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 1.5rem;
+}
+h2.headline {
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 144, 'wght' 400;
+  font-size: clamp(2.4rem, 5vw, 4.4rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  margin-bottom: 1.25rem;
+}
+h2.headline em {
+  font-style: italic;
+  font-variation-settings: 'opsz' 144, 'wght' 300;
+  color: var(--amber-soft);
+}
+.lede {
+  font-family: var(--body);
+  font-size: clamp(1rem, 1.2vw, 1.15rem);
+  line-height: 1.55;
+  color: var(--paper-dim);
+  max-width: 60ch;
+}
+.kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--paper-mute);
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid var(--paper-mute);
+  border-radius: 999px;
+}
+
+/* ── COVER ────────────────────────────────────────── */
+.cover {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr auto;
+  padding: 5vh 6vw;
+}
+.cover-meta-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-mute);
+}
+.cover-meta-top .dot { color: var(--amber); }
+.cover-center {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  position: relative;
+}
+.cover-eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 1.5rem;
+}
+.cover-title {
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 144, 'wght' 300;
+  font-size: clamp(4rem, 11vw, 11rem);
+  line-height: 0.92;
+  letter-spacing: -0.045em;
+  color: var(--paper);
+}
+.cover-title .accent {
+  color: var(--amber);
+  font-style: italic;
+  font-variation-settings: 'opsz' 144, 'wght' 300;
+}
+.cover-title .symbol {
+  display: inline-block;
+  color: var(--mint);
+  margin: 0 0.05em;
+  transform: translateY(-0.08em);
+  font-family: var(--mono);
+  font-weight: 300;
+}
+.cover-sub {
+  margin-top: 2rem;
+  font-family: var(--body);
+  font-size: clamp(1.1rem, 1.4vw, 1.4rem);
+  font-style: italic;
+  color: var(--paper-dim);
+  max-width: 50ch;
+  line-height: 1.45;
+}
+.cover-meta-bottom {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2rem;
+  padding-top: 2rem;
+  border-top: 1px dashed var(--paper-mute);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.cover-meta-bottom dt {
+  color: var(--paper-mute);
+  margin-bottom: 6px;
+}
+.cover-meta-bottom dd {
+  color: var(--paper);
+}
+
+/* Floating particles over cover */
+.particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.particle {
+  position: absolute;
+  width: 4px; height: 4px;
+  background: var(--amber);
+  border-radius: 50%;
+  opacity: 0.5;
+  animation: float 14s linear infinite;
+  box-shadow: 0 0 12px var(--amber);
+}
+.particle.mint { background: var(--mint); box-shadow: 0 0 12px var(--mint); }
+.particle.coral { background: var(--coral); box-shadow: 0 0 12px var(--coral); }
+@keyframes float {
+  from { transform: translateY(110vh) translateX(0); opacity: 0; }
+  10%  { opacity: 0.7; }
+  90%  { opacity: 0.5; }
+  to   { transform: translateY(-10vh) translateX(40px); opacity: 0; }
+}
+
+/* ── SPLIT LAYOUT ─────────────────────────────────── */
+.split {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(280px, 32%) 1fr;
+  gap: 4vw;
+  align-items: stretch;
+}
+.split-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.split-figure {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(135deg, rgba(245,233,212,0.02), transparent),
+    var(--ink-2);
+  border: 1px solid var(--paper-mute);
+  border-radius: 4px;
+  padding: 2rem;
+  overflow: hidden;
+}
+.split-figure::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border: 1px dashed rgba(245,233,212,0.08);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* corner brackets on figure */
+.split-figure::after {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 22px; height: 22px;
+  border-top: 2px solid var(--amber);
+  border-right: 2px solid var(--amber);
+}
+.split-figure .corner {
+  position: absolute;
+  width: 22px; height: 22px;
+}
+.split-figure .corner.tl { top: 0; left: 0; border-top: 2px solid var(--amber); border-left: 2px solid var(--amber); }
+.split-figure .corner.bl { bottom: 0; left: 0; border-bottom: 2px solid var(--amber); border-left: 2px solid var(--amber); }
+.split-figure .corner.br { bottom: 0; right: 0; border-bottom: 2px solid var(--amber); border-right: 2px solid var(--amber); }
+
+/* ── BULLETS ──────────────────────────────────────── */
+.bullets {
+  list-style: none;
+  margin-top: 2rem;
+  display: grid;
+  gap: 1rem;
+}
+.bullets li {
+  font-family: var(--body);
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--paper-dim);
+  padding-left: 24px;
+  position: relative;
+}
+.bullets li::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0.55rem;
+  width: 12px; height: 1px;
+  background: var(--amber);
+}
+.bullets li b {
+  color: var(--paper);
+  font-weight: 600;
+}
+.bullets li code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  color: var(--mint);
+  background: rgba(78,197,165,0.08);
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+
+/* ── PIPELINE NODES ───────────────────────────────── */
+.node {
+  fill: var(--ink-2);
+  stroke: var(--paper-dim);
+  stroke-width: 1.2;
+}
+.node-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  fill: var(--paper);
+  text-transform: uppercase;
+}
+.node-sub {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  fill: var(--paper-mute);
+  text-transform: uppercase;
+}
+.node-num {
+  font-family: var(--serif);
+  font-size: 28px;
+  font-variation-settings: 'opsz' 96, 'wght' 300;
+  fill: var(--amber);
+}
+.flow-line {
+  stroke: var(--paper-mute);
+  stroke-width: 1;
+  fill: none;
+  stroke-dasharray: 4 6;
+}
+.flow-line.solid { stroke-dasharray: none; stroke: var(--paper-dim); }
+
+.pulse {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: pulse 2.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%     { opacity: 0.6; transform: scale(1.04); }
+}
+
+.packet-stream {
+  fill: var(--mint);
+  filter: drop-shadow(0 0 6px var(--mint));
+}
+.packet-batch {
+  fill: var(--amber);
+  filter: drop-shadow(0 0 6px var(--amber));
+}
+.packet-delete {
+  fill: var(--coral);
+  filter: drop-shadow(0 0 6px var(--coral));
+}
+
+/* ── FOOTER NAV ───────────────────────────────────── */
+.nav {
+  position: fixed;
+  bottom: 24px; left: 0; right: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  pointer-events: none;
+}
+.nav > * { pointer-events: auto; }
+.nav-dots {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(10,22,40,0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--paper-mute);
+  border-radius: 999px;
+}
+.nav-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--paper-mute);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: none;
+  padding: 0;
+}
+.nav-dot.active {
+  background: var(--amber);
+  width: 24px;
+  border-radius: 4px;
+  box-shadow: 0 0 12px rgba(244,160,32,0.5);
+}
+.nav-arrow {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: rgba(10,22,40,0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--paper-mute);
+  color: var(--paper);
+  font-family: var(--mono);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+.nav-arrow:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.slide-counter {
+  position: fixed;
+  top: 24px; right: 32px;
+  z-index: 50;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--paper-mute);
+  text-transform: uppercase;
+}
+.slide-counter .current { color: var(--amber); font-size: 14px; }
+
+.brand-mark {
+  position: fixed;
+  top: 24px; left: 32px;
+  z-index: 50;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--paper-mute);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-mark::before {
+  content: '';
+  width: 8px; height: 8px;
+  background: var(--amber);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--amber);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+/* ── CARDS / GRIDS ────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+.card {
+  border: 1px solid var(--paper-mute);
+  background: rgba(245,233,212,0.02);
+  padding: 1.5rem;
+  border-radius: 4px;
+  position: relative;
+}
+.card-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 0.18em;
+  margin-bottom: 0.6rem;
+}
+.card-title {
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 36, 'wght' 500;
+  font-size: 1.4rem;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.5rem;
+  color: var(--paper);
+}
+.card-body {
+  font-family: var(--body);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--paper-dim);
+}
+
+/* ── COMPARISON TABLE ─────────────────────────────── */
+.compare {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  border-top: 1px solid var(--paper-mute);
+  margin-top: 1.5rem;
+  font-family: var(--body);
+}
+.compare > div {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid rgba(245,233,212,0.08);
+}
+.compare-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-mute);
+  border-bottom: 1px solid var(--paper-mute) !important;
+}
+.compare-head.stream { color: var(--mint); }
+.compare-head.batch  { color: var(--amber); }
+.compare .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+.compare .val {
+  font-family: var(--body);
+  color: var(--paper);
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+/* ── KEYBOARD HINT ────────────────────────────────── */
+.hint {
+  position: fixed;
+  bottom: 24px; right: 32px;
+  z-index: 50;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--paper-mute);
+  text-transform: uppercase;
+}
+.hint kbd {
+  font-family: var(--mono);
+  background: rgba(245,233,212,0.08);
+  border: 1px solid var(--paper-mute);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin: 0 2px;
+  font-size: 9px;
+  color: var(--paper);
+}
+
+/* ── SLIDE 7 / CONFLICT ───────────────────────────── */
+.conflict-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin-top: 2rem;
+  flex: 1;
+}
+.scenario {
+  border: 1px solid var(--paper-mute);
+  padding: 1.5rem;
+  border-radius: 4px;
+  background: rgba(245,233,212,0.02);
+  display: flex;
+  flex-direction: column;
+}
+.scenario.bad   { border-left: 3px solid var(--coral); }
+.scenario.good  { border-left: 3px solid var(--mint); }
+.scenario-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+}
+.scenario.bad .scenario-tag { color: var(--coral); }
+.scenario.good .scenario-tag { color: var(--mint); }
+.scenario-title {
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 48, 'wght' 500;
+  font-size: 1.5rem;
+  margin-bottom: 0.8rem;
+  letter-spacing: -0.01em;
+}
+.scenario-figure {
+  flex: 1;
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── PROGRESS BAR ─────────────────────────────────── */
+.progress-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: rgba(245,233,212,0.08);
+  z-index: 100;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--amber), var(--mint));
+  transition: width 0.7s cubic-bezier(0.7, 0, 0.3, 1);
+  box-shadow: 0 0 8px var(--amber);
+}
+
+/* ── HUGE NUMBER (cover-style accents) ────────────── */
+.huge-num {
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 144, 'wght' 300;
+  font-size: clamp(5rem, 11vw, 10rem);
+  line-height: 0.9;
+  color: var(--amber);
+  letter-spacing: -0.04em;
+}
+
+/* code blocks */
+pre.code {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--paper);
+  background: var(--ink);
+  border: 1px solid var(--paper-mute);
+  border-left: 3px solid var(--mint);
+  padding: 1rem 1.25rem;
+  border-radius: 3px;
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+pre.code .kw  { color: var(--amber); }
+pre.code .fn  { color: var(--mint); }
+pre.code .str { color: var(--coral); }
+pre.code .com { color: var(--steel); font-style: italic; }
+
+/* small caps title for diagrams */
+.fig-cap {
+  position: absolute;
+  top: 16px; left: 22px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-mute);
+}
+.fig-cap b { color: var(--paper); font-weight: 500; }
+.fig-tag {
+  position: absolute;
+  bottom: 16px; right: 22px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-mute);
+}
+.fig-tag .v { color: var(--mint); }
+
+/* table-friendly stat row */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+  margin-top: 2.5rem;
+  padding-top: 2rem;
+  border-top: 1px dashed var(--paper-mute);
+}
+.stat .stat-num {
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 96, 'wght' 400;
+  font-size: 3rem;
+  line-height: 1;
+  color: var(--amber);
+  letter-spacing: -0.02em;
+}
+.stat .stat-num em {
+  font-style: italic;
+  font-variation-settings: 'opsz' 96, 'wght' 300;
+  color: var(--mint);
+}
+.stat .stat-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--paper-mute);
+  text-transform: uppercase;
+  margin-top: 0.6rem;
+}
+
+@media (max-width: 900px) {
+  .split { grid-template-columns: 1fr; }
+  .conflict-grid { grid-template-columns: 1fr; }
+  .stat-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="progress-bar"><div class="progress-bar-fill" id="progress"></div></div>
+
+<div class="brand-mark">FLINK × DBT / POC</div>
+<div class="slide-counter"><span class="current" id="counter-current">01</span> / <span id="counter-total">09</span></div>
+
+<main class="deck" id="deck">
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 01: COVER -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide cover" data-slide="0">
+    <div class="particles">
+      <div class="particle" style="left: 8%; animation-delay: 0s;"></div>
+      <div class="particle mint" style="left: 18%; animation-delay: 2.4s; animation-duration: 18s;"></div>
+      <div class="particle" style="left: 28%; animation-delay: 5s; animation-duration: 12s;"></div>
+      <div class="particle coral" style="left: 41%; animation-delay: 7s; animation-duration: 16s;"></div>
+      <div class="particle mint" style="left: 55%; animation-delay: 1s;"></div>
+      <div class="particle" style="left: 67%; animation-delay: 9s; animation-duration: 11s;"></div>
+      <div class="particle mint" style="left: 76%; animation-delay: 3s;"></div>
+      <div class="particle" style="left: 84%; animation-delay: 6s; animation-duration: 13s;"></div>
+      <div class="particle coral" style="left: 92%; animation-delay: 8s;"></div>
+    </div>
+
+    <header class="cover-meta-top">
+      <div class="reveal reveal-1">
+        <span class="dot">●</span> &nbsp; CONFIDENTIAL / INTERNAL
+      </div>
+      <div class="reveal reveal-1">
+        DECK No. 001 / V·1
+      </div>
+    </header>
+
+    <div class="cover-center">
+      <div class="cover-eyebrow reveal reveal-2">A Two-Pipeline Architecture</div>
+      <h1 class="cover-title reveal reveal-3">
+        Two Pipelines,<br/>
+        One <span class="accent">Lake</span><span class="symbol">.</span>
+      </h1>
+      <p class="cover-sub reveal reveal-4">
+        How streaming CDC and batch ingestion converge inside an Iceberg warehouse — and how the system stays consistent when they collide.
+      </p>
+    </div>
+
+    <dl class="cover-meta-bottom reveal reveal-5">
+      <div><dt>STACK</dt><dd>FLINK · KAFKA · ICEBERG · DBT</dd></div>
+      <div><dt>DEPLOYMENT</dt><dd>AWS / GLUE CATALOG / S3</dd></div>
+      <div><dt>PATTERN</dt><dd>CDC LOG + BATCH INGEST</dd></div>
+      <div><dt>DATE</dt><dd>2026 · 05 · 04</dd></div>
+    </dl>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 02: OVERVIEW — TWO PIPELINES SIDE BY SIDE -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="1">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">02</span> &nbsp; / &nbsp; SYSTEM OVERVIEW</span>
+      <span class="tag-section">PART I — TOPOLOGY</span>
+    </header>
+
+    <div style="display: grid; grid-template-columns: 1.1fr 1fr; gap: 4vw; flex: 1;">
+      <div style="display: flex; flex-direction: column; justify-content: center;">
+        <h1 class="eyebrow reveal reveal-2">01 / OVERVIEW</h1>
+        <h2 class="headline reveal reveal-3">Two paths.<br/><em>One destination.</em></h2>
+        <p class="lede reveal reveal-4">
+          Real-time events flow from <b style="color:var(--paper)">Kafka</b> through Flink-streaming into an immutable CDC log. Historical and bulk data flow from <b style="color:var(--paper)">S3 Parquet</b> through Flink-batch into target tables. Both land in the <b style="color:var(--paper)">same Iceberg warehouse</b>; <b style="color:var(--paper)">dbt</b> projects them into a single source of truth.
+        </p>
+        <ul class="bullets reveal reveal-5">
+          <li><b>Streaming</b> — long-lived, EXACTLY_ONCE, <code>10s</code> checkpoints</li>
+          <li><b>Batch</b> — one-shot, single commit, partition pruning</li>
+          <li><b>Iceberg</b> — shared catalog, ACID, time-travel</li>
+        </ul>
+      </div>
+
+      <div class="split-figure reveal reveal-4">
+        <span class="corner tl"></span><span class="corner bl"></span><span class="corner br"></span>
+        <span class="fig-cap"><b>FIG·01</b> — system topology</span>
+        <span class="fig-tag">SCALE <span class="v">1:1</span></span>
+
+        <svg viewBox="0 0 720 480" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <path id="path-stream" d="M 110 130 L 280 130 L 280 130 L 450 130" />
+            <path id="path-batch"  d="M 110 350 L 280 350 L 280 350 L 450 350" />
+            <path id="path-merge1" d="M 540 130 L 600 240" />
+            <path id="path-merge2" d="M 540 350 L 600 240" />
+            <path id="path-final"  d="M 600 240 L 680 240" />
+          </defs>
+
+          <!-- Streaming row -->
+          <g transform="translate(60, 100)">
+            <rect class="node pulse" x="0" y="0" width="100" height="60" rx="2" />
+            <text class="node-label" x="50" y="28" text-anchor="middle">KAFKA</text>
+            <text class="node-sub" x="50" y="46" text-anchor="middle">topic · cdc</text>
+            <text class="node-num" x="0" y="-10">01</text>
+          </g>
+
+          <g transform="translate(230, 100)">
+            <rect class="node" x="0" y="0" width="100" height="60" rx="2" />
+            <text class="node-label" x="50" y="28" text-anchor="middle">FLINK</text>
+            <text class="node-sub" x="50" y="46" text-anchor="middle">streaming</text>
+          </g>
+
+          <g transform="translate(400, 100)">
+            <rect class="node" x="0" y="0" width="100" height="60" rx="2" />
+            <text class="node-label" x="50" y="28" text-anchor="middle">CDC LOG</text>
+            <text class="node-sub" x="50" y="46" text-anchor="middle">append-only</text>
+          </g>
+
+          <!-- Batch row -->
+          <g transform="translate(60, 320)">
+            <rect class="node pulse" x="0" y="0" width="100" height="60" rx="2" style="animation-delay:1.2s" />
+            <text class="node-label" x="50" y="28" text-anchor="middle">S3</text>
+            <text class="node-sub" x="50" y="46" text-anchor="middle">parquet · part</text>
+            <text class="node-num" x="0" y="-10">02</text>
+          </g>
+
+          <g transform="translate(230, 320)">
+            <rect class="node" x="0" y="0" width="100" height="60" rx="2" />
+            <text class="node-label" x="50" y="28" text-anchor="middle">FLINK</text>
+            <text class="node-sub" x="50" y="46" text-anchor="middle">batch</text>
+          </g>
+
+          <g transform="translate(400, 320)">
+            <rect class="node" x="0" y="0" width="100" height="60" rx="2" />
+            <text class="node-label" x="50" y="28" text-anchor="middle">TABLES</text>
+            <text class="node-sub" x="50" y="46" text-anchor="middle">iceberg</text>
+          </g>
+
+          <!-- Iceberg merge -->
+          <g transform="translate(560, 200)">
+            <rect class="node" x="0" y="0" width="100" height="80" rx="2"
+                  style="fill:rgba(244,160,32,0.06); stroke:var(--amber)" />
+            <text class="node-label" x="50" y="32" text-anchor="middle" style="fill:var(--amber)">ICEBERG</text>
+            <text class="node-sub" x="50" y="50" text-anchor="middle">warehouse</text>
+            <text class="node-sub" x="50" y="64" text-anchor="middle">snapshots</text>
+          </g>
+
+          <!-- dbt -->
+          <g transform="translate(680, 215)">
+            <circle cx="20" cy="25" r="22" class="node pulse"
+                    style="fill:rgba(78,197,165,0.1); stroke:var(--mint); animation-delay:0.6s" />
+            <text class="node-label" x="20" y="30" text-anchor="middle" style="fill:var(--mint); font-size:10px">DBT</text>
+          </g>
+
+          <!-- Flow lines -->
+          <line class="flow-line solid" x1="160" y1="130" x2="230" y2="130" />
+          <line class="flow-line solid" x1="330" y1="130" x2="400" y2="130" />
+          <line class="flow-line solid" x1="500" y1="130" x2="560" y2="220" />
+
+          <line class="flow-line solid" x1="160" y1="350" x2="230" y2="350" />
+          <line class="flow-line solid" x1="330" y1="350" x2="400" y2="350" />
+          <line class="flow-line solid" x1="500" y1="350" x2="560" y2="260" />
+
+          <line class="flow-line" x1="660" y1="240" x2="680" y2="240" />
+
+          <!-- Animated packets — stream lane -->
+          <g>
+            <circle r="5" class="packet-stream">
+              <animateMotion dur="2.6s" repeatCount="indefinite" path="M 160 130 L 230 130" />
+            </circle>
+            <circle r="5" class="packet-stream">
+              <animateMotion dur="2.6s" repeatCount="indefinite" begin="0.4s" path="M 160 130 L 230 130" />
+            </circle>
+            <circle r="5" class="packet-stream">
+              <animateMotion dur="2.6s" repeatCount="indefinite" begin="0.9s" path="M 160 130 L 230 130" />
+            </circle>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="2.4s" repeatCount="indefinite" begin="0.2s" path="M 330 130 L 400 130" />
+            </circle>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="2.4s" repeatCount="indefinite" begin="0.7s" path="M 330 130 L 400 130" />
+            </circle>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="2.6s" repeatCount="indefinite" path="M 500 130 L 560 220" />
+            </circle>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="2.6s" repeatCount="indefinite" begin="0.8s" path="M 500 130 L 560 220" />
+            </circle>
+          </g>
+
+          <!-- Animated packets — batch lane (chunky, slower) -->
+          <g>
+            <rect width="14" height="14" class="packet-batch" rx="1">
+              <animateMotion dur="5s" repeatCount="indefinite" path="M 153 343 L 223 343" />
+            </rect>
+            <rect width="14" height="14" class="packet-batch" rx="1">
+              <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s" path="M 153 343 L 223 343" />
+            </rect>
+            <rect width="12" height="12" class="packet-batch" rx="1">
+              <animateMotion dur="4s" repeatCount="indefinite" path="M 324 344 L 394 344" />
+            </rect>
+            <rect width="12" height="12" class="packet-batch" rx="1">
+              <animateMotion dur="4s" repeatCount="indefinite" begin="2s" path="M 324 344 L 394 344" />
+            </rect>
+            <rect width="12" height="12" class="packet-batch" rx="1">
+              <animateMotion dur="4s" repeatCount="indefinite" path="M 500 350 L 560 260" />
+            </rect>
+          </g>
+
+          <!-- Final flow to dbt -->
+          <circle r="3" fill="var(--paper)">
+            <animateMotion dur="1.8s" repeatCount="indefinite" path="M 660 240 L 680 240" />
+          </circle>
+
+          <!-- Annotations -->
+          <text class="node-sub" x="60" y="90" style="fill:var(--mint)">▸ STREAMING LANE</text>
+          <text class="node-sub" x="60" y="310" style="fill:var(--amber)">▸ BATCH LANE</text>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 03: STREAMING DETAIL -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="2">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">03</span> &nbsp; / &nbsp; STREAMING PIPELINE</span>
+      <span class="tag-section">PART II — REAL-TIME CDC</span>
+    </header>
+
+    <div class="split">
+      <div class="split-text">
+        <h1 class="eyebrow reveal reveal-2">PIPELINE A</h1>
+        <h2 class="headline reveal reveal-3">Kafka <em>→</em> Flink <em>→</em> Iceberg log</h2>
+        <p class="lede reveal reveal-4">
+          The streaming pipeline appends every change-data event into an immutable CDC log. Operation type travels in the Kafka <b style="color:var(--paper)">message header</b>; Flink reads it as a virtual METADATA column and writes a flattened row per event.
+        </p>
+        <ul class="bullets reveal reveal-5">
+          <li><b>Mode</b> — <code>runtime-mode = streaming</code></li>
+          <li><b>Checkpoint</b> — every <code>10s</code>, EXACTLY_ONCE</li>
+          <li><b>Sink</b> — append-only Iceberg v2 table</li>
+          <li><b>Headers</b> — <code>operation</code>, <code>source</code>, <code>timestamp</code></li>
+        </ul>
+      </div>
+
+      <div class="split-figure reveal reveal-4">
+        <span class="corner tl"></span><span class="corner bl"></span><span class="corner br"></span>
+        <span class="fig-cap"><b>FIG·02</b> — streaming pipeline</span>
+        <span class="fig-tag">EXACTLY_ONCE <span class="v">@10s</span></span>
+
+        <svg viewBox="0 0 720 460" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+          <!-- Kafka topic with partitions -->
+          <g transform="translate(40, 130)">
+            <text class="node-sub" x="0" y="-12">KAFKA TOPIC · ORDERS_TOPIC</text>
+            <rect class="node" x="0" y="0"  width="140" height="38" rx="2" />
+            <rect class="node" x="0" y="44" width="140" height="38" rx="2" />
+            <rect class="node" x="0" y="88" width="140" height="38" rx="2" />
+            <text class="node-sub" x="14" y="24">P-0</text>
+            <text class="node-sub" x="14" y="68">P-1</text>
+            <text class="node-sub" x="14" y="112">P-2</text>
+
+            <!-- packet visuals inside partitions -->
+            <g>
+              <rect x="44" y="11" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite" begin="0s" />
+              </rect>
+              <rect x="68" y="11" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite" begin="0.5s" />
+              </rect>
+              <rect x="92" y="11" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite" begin="1s" />
+              </rect>
+              <rect x="116" y="11" width="14" height="16" rx="1" class="packet-delete">
+                <animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite" begin="1.5s" />
+              </rect>
+            </g>
+            <g>
+              <rect x="44" y="55" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2.2s" repeatCount="indefinite" begin="0.3s" />
+              </rect>
+              <rect x="68" y="55" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2.2s" repeatCount="indefinite" begin="0.8s" />
+              </rect>
+              <rect x="92" y="55" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2.2s" repeatCount="indefinite" begin="1.3s" />
+              </rect>
+            </g>
+            <g>
+              <rect x="44" y="99" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2.4s" repeatCount="indefinite" begin="0.6s" />
+              </rect>
+              <rect x="68" y="99" width="14" height="16" rx="1" class="packet-stream">
+                <animate attributeName="opacity" values="0;1;0" dur="2.4s" repeatCount="indefinite" begin="1.1s" />
+              </rect>
+            </g>
+          </g>
+
+          <!-- Flink processor -->
+          <g transform="translate(280, 165)">
+            <text class="node-sub" x="60" y="-30" text-anchor="middle">FLINK SQL · STREAMING</text>
+            <rect class="node" x="0" y="-10" width="120" height="80" rx="2"
+                  style="fill:rgba(78,197,165,0.05); stroke:var(--mint)" />
+            <text class="node-label" x="60" y="20" text-anchor="middle" style="fill:var(--mint)">FLINK</text>
+            <text class="node-sub" x="60" y="38" text-anchor="middle">extract headers</text>
+            <text class="node-sub" x="60" y="52" text-anchor="middle">+ payload</text>
+            <!-- gear-like rotating square -->
+            <g transform="translate(60, 75)">
+              <rect x="-10" y="-10" width="20" height="20" rx="2" stroke="var(--mint)" fill="none" stroke-width="1">
+                <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="6s" repeatCount="indefinite" />
+              </rect>
+            </g>
+          </g>
+
+          <!-- Iceberg CDC log -->
+          <g transform="translate(490, 130)">
+            <text class="node-sub" x="100" y="-12" text-anchor="middle">ICEBERG · iceberg_orders_cdc_log</text>
+            <rect class="node" x="0" y="0" width="200" height="130" rx="2"
+                  style="fill:rgba(244,160,32,0.04); stroke:var(--amber)" />
+            <text class="node-label" x="100" y="22" text-anchor="middle" style="fill:var(--amber)">CDC LOG</text>
+            <text class="node-sub" x="100" y="38" text-anchor="middle">append-only · v2</text>
+
+            <!-- snapshot rows -->
+            <g transform="translate(12, 50)">
+              <rect width="176" height="12" rx="1" fill="rgba(245,233,212,0.04)" />
+              <text class="node-sub" x="6" y="9" style="font-size:8px">snap·0001</text>
+              <text class="node-sub" x="100" y="9" style="font-size:8px">id=1001 · op=I</text>
+            </g>
+            <g transform="translate(12, 66)">
+              <rect width="176" height="12" rx="1" fill="rgba(245,233,212,0.04)" />
+              <text class="node-sub" x="6" y="9" style="font-size:8px">snap·0002</text>
+              <text class="node-sub" x="100" y="9" style="font-size:8px">id=1001 · op=U</text>
+            </g>
+            <g transform="translate(12, 82)">
+              <rect width="176" height="12" rx="1" fill="rgba(245,233,212,0.04)" />
+              <text class="node-sub" x="6" y="9" style="font-size:8px">snap·0003</text>
+              <text class="node-sub" x="100" y="9" style="font-size:8px">id=1002 · op=I</text>
+            </g>
+            <g transform="translate(12, 98)">
+              <rect width="176" height="12" rx="1" fill="rgba(245,233,212,0.04)" />
+              <text class="node-sub" x="6" y="9" style="font-size:8px">snap·0004</text>
+              <text class="node-sub" x="100" y="9" style="font-size:8px; fill:var(--coral)">id=1001 · op=D</text>
+            </g>
+            <g transform="translate(12, 114)">
+              <rect width="176" height="12" rx="1" fill="rgba(245,233,212,0.06)">
+                <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite" />
+              </rect>
+              <text class="node-sub" x="6" y="9" style="font-size:8px">snap·0005</text>
+              <text class="node-sub" x="100" y="9" style="font-size:8px">writing…</text>
+            </g>
+          </g>
+
+          <!-- Flow lines + packets -->
+          <line class="flow-line solid" x1="180" y1="195" x2="280" y2="195" stroke="var(--mint)" />
+          <line class="flow-line solid" x1="400" y1="195" x2="490" y2="195" stroke="var(--mint)" />
+
+          <g>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="1.6s" repeatCount="indefinite" path="M 180 195 L 280 195" />
+            </circle>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="1.6s" repeatCount="indefinite" begin="0.4s" path="M 180 195 L 280 195" />
+            </circle>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="1.6s" repeatCount="indefinite" begin="0.8s" path="M 180 195 L 280 195" />
+            </circle>
+            <circle r="4" class="packet-delete">
+              <animateMotion dur="1.6s" repeatCount="indefinite" begin="1.2s" path="M 180 195 L 280 195" />
+            </circle>
+
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="1.6s" repeatCount="indefinite" begin="0.2s" path="M 400 195 L 490 195" />
+            </circle>
+            <circle r="4" class="packet-stream">
+              <animateMotion dur="1.6s" repeatCount="indefinite" begin="0.7s" path="M 400 195 L 490 195" />
+            </circle>
+            <circle r="4" class="packet-delete">
+              <animateMotion dur="1.6s" repeatCount="indefinite" begin="1.4s" path="M 400 195 L 490 195" />
+            </circle>
+          </g>
+
+          <!-- Header callout -->
+          <g transform="translate(40, 340)">
+            <rect width="640" height="80" rx="2" fill="rgba(78,197,165,0.04)" stroke="var(--mint)" stroke-dasharray="3 4" stroke-width="1" />
+            <text class="node-sub" x="14" y="18" style="fill:var(--mint)">▸ KAFKA HEADER → METADATA COLUMN</text>
+            <text class="node-label" x="14" y="42" style="font-size:10px; letter-spacing:0.06em">
+              <tspan style="fill:var(--amber)">operation</tspan>
+              <tspan style="fill:var(--paper-mute)"> STRING METADATA FROM </tspan>
+              <tspan style="fill:var(--coral)">'value.headers.operation'</tspan>
+            </text>
+            <text class="node-label" x="14" y="60" style="font-size:10px; letter-spacing:0.06em">
+              <tspan style="fill:var(--amber)">source</tspan>
+              <tspan style="fill:var(--paper-mute)"> STRING METADATA FROM </tspan>
+              <tspan style="fill:var(--coral)">'value.headers.source'</tspan>
+            </text>
+            <text class="node-label" x="14" y="74" style="font-size:9px; letter-spacing:0.04em; fill:var(--paper-mute); font-style:italic">
+              ▸ headers travel with the message; Flink reads them as virtual columns and writes them flat into the log
+            </text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 04: BATCH PIPELINE -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="3">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">04</span> &nbsp; / &nbsp; BATCH PIPELINE</span>
+      <span class="tag-section">PART III — BULK INGEST</span>
+    </header>
+
+    <div class="split">
+      <div class="split-text">
+        <h1 class="eyebrow reveal reveal-2">PIPELINE B</h1>
+        <h2 class="headline reveal reveal-3">S3 Parquet <em>→</em> Flink <em>→</em> Iceberg</h2>
+        <p class="lede reveal reveal-4">
+          Batch jobs read partitioned Parquet from S3 in parallel across TaskManagers. They run once, commit once. <b style="color:var(--paper)">Partition pruning</b> means a query against last week never touches last decade.
+        </p>
+        <ul class="bullets reveal reveal-5">
+          <li><b>Mode</b> — <code>runtime-mode = batch</code></li>
+          <li><b>Layout</b> — <code>year=/month=/day=</code> Hive-style</li>
+          <li><b>Commit</b> — <b>single</b> snapshot at job end</li>
+          <li><b>Use cases</b> — backfills, corrections, historical loads</li>
+        </ul>
+      </div>
+
+      <div class="split-figure reveal reveal-4">
+        <span class="corner tl"></span><span class="corner bl"></span><span class="corner br"></span>
+        <span class="fig-cap"><b>FIG·03</b> — batch pipeline</span>
+        <span class="fig-tag">SINGLE COMMIT <span class="v">@end</span></span>
+
+        <svg viewBox="0 0 720 460" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+          <!-- S3 partitioned layout -->
+          <g transform="translate(40, 90)">
+            <text class="node-sub" x="0" y="-12">S3 BUCKET · year=/month=/day=</text>
+            <!-- year folders -->
+            <g>
+              <rect class="node" x="0" y="0" width="60" height="36" rx="2" />
+              <text class="node-sub" x="30" y="22" text-anchor="middle" style="font-size:9px">y=2024</text>
+            </g>
+            <g>
+              <rect class="node" x="0" y="46" width="60" height="36" rx="2" />
+              <text class="node-sub" x="30" y="68" text-anchor="middle" style="font-size:9px">y=2025</text>
+            </g>
+            <g>
+              <rect class="node" x="0" y="92" width="60" height="36" rx="2" style="fill:rgba(244,160,32,0.12); stroke:var(--amber)" />
+              <text class="node-sub" x="30" y="114" text-anchor="middle" style="font-size:9px; fill:var(--amber)">y=2026</text>
+            </g>
+
+            <!-- month folders for 2026 -->
+            <g>
+              <rect class="node" x="80" y="46" width="60" height="36" rx="2" />
+              <text class="node-sub" x="110" y="68" text-anchor="middle" style="font-size:9px">m=04</text>
+            </g>
+            <g>
+              <rect class="node" x="80" y="92" width="60" height="36" rx="2" style="fill:rgba(244,160,32,0.12); stroke:var(--amber)" />
+              <text class="node-sub" x="110" y="114" text-anchor="middle" style="font-size:9px; fill:var(--amber)">m=05</text>
+            </g>
+
+            <!-- parquet files -->
+            <g>
+              <rect class="node" x="160" y="60" width="68" height="22" rx="2" />
+              <text class="node-sub" x="194" y="74" text-anchor="middle" style="font-size:8px">part-001.parquet</text>
+            </g>
+            <g>
+              <rect class="node" x="160" y="86" width="68" height="22" rx="2" />
+              <text class="node-sub" x="194" y="100" text-anchor="middle" style="font-size:8px">part-002.parquet</text>
+            </g>
+            <g>
+              <rect class="node" x="160" y="112" width="68" height="22" rx="2" />
+              <text class="node-sub" x="194" y="126" text-anchor="middle" style="font-size:8px">part-003.parquet</text>
+            </g>
+
+            <!-- folder lines -->
+            <line x1="60" y1="110" x2="80" y2="110" stroke="var(--paper-mute)" stroke-dasharray="2 3"/>
+            <line x1="60" y1="110" x2="80" y2="64" stroke="var(--paper-mute)" stroke-dasharray="2 3"/>
+            <line x1="140" y1="110" x2="160" y2="71" stroke="var(--paper-mute)" stroke-dasharray="2 3"/>
+            <line x1="140" y1="110" x2="160" y2="97" stroke="var(--paper-mute)" stroke-dasharray="2 3"/>
+            <line x1="140" y1="110" x2="160" y2="123" stroke="var(--paper-mute)" stroke-dasharray="2 3"/>
+          </g>
+
+          <!-- Parallel readers (TaskManagers) -->
+          <g transform="translate(330, 100)">
+            <text class="node-sub" x="50" y="-12" text-anchor="middle">FLINK · BATCH · 3 TASKS</text>
+            <g transform="translate(0, 0)">
+              <rect class="node" x="0" y="0" width="100" height="30" rx="2"
+                    style="fill:rgba(244,160,32,0.06); stroke:var(--amber)" />
+              <text class="node-sub" x="50" y="19" text-anchor="middle" style="fill:var(--amber)">TASK · 0</text>
+            </g>
+            <g transform="translate(0, 40)">
+              <rect class="node" x="0" y="0" width="100" height="30" rx="2"
+                    style="fill:rgba(244,160,32,0.06); stroke:var(--amber)" />
+              <text class="node-sub" x="50" y="19" text-anchor="middle" style="fill:var(--amber)">TASK · 1</text>
+            </g>
+            <g transform="translate(0, 80)">
+              <rect class="node" x="0" y="0" width="100" height="30" rx="2"
+                    style="fill:rgba(244,160,32,0.06); stroke:var(--amber)" />
+              <text class="node-sub" x="50" y="19" text-anchor="middle" style="fill:var(--amber)">TASK · 2</text>
+            </g>
+          </g>
+
+          <!-- single commit symbol -->
+          <g transform="translate(490, 130)">
+            <text class="node-sub" x="100" y="-12" text-anchor="middle">ICEBERG · iceberg_orders_part</text>
+            <rect class="node" x="0" y="0" width="200" height="80" rx="2"
+                  style="fill:rgba(244,160,32,0.04); stroke:var(--amber)" />
+            <text class="node-label" x="100" y="24" text-anchor="middle" style="fill:var(--amber)">PARTITIONED TABLE</text>
+            <text class="node-sub" x="100" y="42" text-anchor="middle">SINGLE SNAPSHOT</text>
+
+            <!-- big single commit pulse -->
+            <circle cx="100" cy="60" r="10" fill="none" stroke="var(--amber)" stroke-width="2">
+              <animate attributeName="r" values="10;26;10" dur="2.4s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="1;0;1" dur="2.4s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="100" cy="60" r="6" fill="var(--amber)" />
+          </g>
+
+          <!-- Flow lines -->
+          <line class="flow-line" x1="270" y1="160" x2="330" y2="115" stroke="var(--amber)" />
+          <line class="flow-line" x1="270" y1="186" x2="330" y2="155" stroke="var(--amber)" />
+          <line class="flow-line" x1="270" y1="212" x2="330" y2="195" stroke="var(--amber)" />
+
+          <line class="flow-line" x1="430" y1="115" x2="490" y2="160" stroke="var(--amber)" />
+          <line class="flow-line" x1="430" y1="155" x2="490" y2="170" stroke="var(--amber)" />
+          <line class="flow-line" x1="430" y1="195" x2="490" y2="180" stroke="var(--amber)" />
+
+          <!-- Animated chunky packets -->
+          <g>
+            <rect width="14" height="14" class="packet-batch" rx="1">
+              <animateMotion dur="3s" repeatCount="indefinite" path="M 268 159 L 328 114" />
+            </rect>
+            <rect width="14" height="14" class="packet-batch" rx="1">
+              <animateMotion dur="3s" repeatCount="indefinite" begin="1s" path="M 268 185 L 328 154" />
+            </rect>
+            <rect width="14" height="14" class="packet-batch" rx="1">
+              <animateMotion dur="3s" repeatCount="indefinite" begin="0.5s" path="M 268 211 L 328 194" />
+            </rect>
+            <rect width="12" height="12" class="packet-batch" rx="1">
+              <animateMotion dur="3s" repeatCount="indefinite" begin="0.4s" path="M 428 114 L 488 159" />
+            </rect>
+            <rect width="12" height="12" class="packet-batch" rx="1">
+              <animateMotion dur="3s" repeatCount="indefinite" begin="1.4s" path="M 428 154 L 488 169" />
+            </rect>
+            <rect width="12" height="12" class="packet-batch" rx="1">
+              <animateMotion dur="3s" repeatCount="indefinite" begin="0.9s" path="M 428 194 L 488 179" />
+            </rect>
+          </g>
+
+          <!-- Pruning callout -->
+          <g transform="translate(40, 320)">
+            <rect width="640" height="100" rx="2" fill="rgba(244,160,32,0.04)" stroke="var(--amber)" stroke-dasharray="3 4" stroke-width="1" />
+            <text class="node-sub" x="14" y="20" style="fill:var(--amber)">▸ PARTITION PRUNING</text>
+            <text class="node-label" x="14" y="46" style="font-size:11px; letter-spacing:0.06em">
+              <tspan style="fill:var(--amber)">SELECT</tspan>
+              <tspan style="fill:var(--paper)"> * FROM iceberg_orders_part </tspan>
+              <tspan style="fill:var(--amber)">WHERE</tspan>
+              <tspan style="fill:var(--paper)"> year = </tspan><tspan style="fill:var(--mint)">2026</tspan>
+              <tspan style="fill:var(--paper)"> AND month = </tspan><tspan style="fill:var(--mint)">5</tspan>
+              <tspan style="fill:var(--paper)">;</tspan>
+            </text>
+            <text class="node-sub" x="14" y="68" style="font-size:9px; fill:var(--paper-mute); font-style:italic">
+              ▸ only files in matching directories are read and decompressed
+            </text>
+            <text class="node-sub" x="14" y="84" style="font-size:9px; fill:var(--mint)">
+              ▸ planner skips: y=2024/* &nbsp;·&nbsp; y=2025/* &nbsp;·&nbsp; y=2026/m=04/*
+            </text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 05: ICEBERG MEETING POINT -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="4">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">05</span> &nbsp; / &nbsp; THE LAKE</span>
+      <span class="tag-section">PART IV — CONVERGENCE</span>
+    </header>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4vw; flex: 1; align-items: center;">
+      <div>
+        <h1 class="eyebrow reveal reveal-2">04 / WAREHOUSE</h1>
+        <h2 class="headline reveal reveal-3">Iceberg is the<br/><em>meeting point.</em></h2>
+        <p class="lede reveal reveal-4">
+          Both pipelines write to the same warehouse — usually to <b style="color:var(--paper)">different tables</b>, sometimes to the same one. Iceberg's snapshot isolation means writers don't block readers, and every commit produces a new immutable snapshot.
+        </p>
+
+        <div class="stat-row reveal reveal-5">
+          <div class="stat">
+            <div class="stat-num">5</div>
+            <div class="stat-label">Iceberg tables<br/>in warehouse</div>
+          </div>
+          <div class="stat">
+            <div class="stat-num"><em>ACID</em></div>
+            <div class="stat-label">Concurrent<br/>writers safe</div>
+          </div>
+          <div class="stat">
+            <div class="stat-num">∞</div>
+            <div class="stat-label">Time-travel<br/>snapshots</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="split-figure reveal reveal-4" style="height: 70vh;">
+        <span class="corner tl"></span><span class="corner bl"></span><span class="corner br"></span>
+        <span class="fig-cap"><b>FIG·04</b> — snapshot timeline</span>
+        <span class="fig-tag">GLUE CATALOG <span class="v">live</span></span>
+
+        <svg viewBox="0 0 600 520" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+          <!-- Vertical timeline -->
+          <line x1="300" y1="40" x2="300" y2="490" stroke="var(--paper-mute)" stroke-dasharray="2 4" stroke-width="1" />
+
+          <!-- Snapshots (stream + batch interleaved) -->
+          <g transform="translate(0, 60)">
+            <circle cx="300" cy="0" r="6" fill="var(--mint)" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0042</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:00:10 · +14 rows</text>
+          </g>
+          <g transform="translate(0, 100)">
+            <circle cx="300" cy="0" r="6" fill="var(--mint)" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0043</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:00:20 · +9 rows</text>
+          </g>
+          <g transform="translate(0, 140)">
+            <circle cx="300" cy="0" r="9" fill="var(--amber)" stroke="var(--paper)" stroke-width="1" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--amber)">BATCH · snap·0044</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:00:30 · +120K rows</text>
+          </g>
+          <g transform="translate(0, 180)">
+            <circle cx="300" cy="0" r="6" fill="var(--mint)" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0045</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:00:40 · +11 rows</text>
+          </g>
+          <g transform="translate(0, 220)">
+            <circle cx="300" cy="0" r="6" fill="var(--mint)" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0046</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:00:50 · +7 rows</text>
+          </g>
+          <g transform="translate(0, 260)">
+            <circle cx="300" cy="0" r="6" fill="var(--mint)" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0047</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:01:00 · +13 rows</text>
+          </g>
+          <g transform="translate(0, 300)">
+            <circle cx="300" cy="0" r="9" fill="var(--coral)" stroke="var(--paper)" stroke-width="1" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--coral)">GDPR · snap·0048</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:01:10 · −1 row</text>
+          </g>
+          <g transform="translate(0, 340)">
+            <circle cx="300" cy="0" r="6" fill="var(--mint)" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0049</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:01:20 · +12 rows</text>
+          </g>
+          <g transform="translate(0, 380)">
+            <circle cx="300" cy="0" r="6" fill="var(--mint)" />
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0050</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">10:01:30 · +10 rows</text>
+          </g>
+
+          <!-- pulsing newest -->
+          <g transform="translate(0, 420)">
+            <circle cx="300" cy="0" r="8" fill="var(--mint)">
+              <animate attributeName="opacity" values="1;0.4;1" dur="1.6s" repeatCount="indefinite" />
+            </circle>
+            <text class="node-sub" x="120" y="4" text-anchor="end" style="fill:var(--mint)">STREAM · snap·0051</text>
+            <text class="node-sub" x="320" y="4" style="font-size:9px">writing…</text>
+          </g>
+
+          <!-- legend -->
+          <g transform="translate(40, 470)">
+            <circle cx="6" cy="0" r="5" fill="var(--mint)" />
+            <text class="node-sub" x="18" y="4" style="font-size:9px">STREAM</text>
+            <circle cx="100" cy="0" r="5" fill="var(--amber)" />
+            <text class="node-sub" x="112" y="4" style="font-size:9px">BATCH</text>
+            <circle cx="190" cy="0" r="5" fill="var(--coral)" />
+            <text class="node-sub" x="202" y="4" style="font-size:9px">DELETE</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 06: DBT PROJECTION -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="5">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">06</span> &nbsp; / &nbsp; DBT PROJECTION</span>
+      <span class="tag-section">PART V — RESOLVING TRUTH</span>
+    </header>
+
+    <div class="split">
+      <div class="split-text">
+        <h1 class="eyebrow reveal reveal-2">DOWNSTREAM</h1>
+        <h2 class="headline reveal reveal-3">Log <em>→</em> truth.<br/>One window at a time.</h2>
+        <p class="lede reveal reveal-4">
+          The CDC log is append-only — the same primary key may appear many times. dbt collapses each key to its latest event and filters out deletes, producing a single coherent <b style="color:var(--paper)">current-state</b> view.
+        </p>
+
+        <pre class="code reveal reveal-5">
+<span class="kw">SELECT</span> *
+<span class="kw">FROM</span> (
+  <span class="kw">SELECT</span> *,
+    <span class="fn">ROW_NUMBER</span>() <span class="kw">OVER</span> (
+      <span class="kw">PARTITION BY</span> id
+      <span class="kw">ORDER BY</span> event_ts <span class="kw">DESC</span>
+    ) <span class="kw">AS</span> rn
+  <span class="kw">FROM</span> iceberg_orders_cdc_log
+)
+<span class="kw">WHERE</span> rn = <span class="str">1</span>
+  <span class="kw">AND</span> op &lt;&gt; <span class="str">'DELETE'</span>;
+        </pre>
+      </div>
+
+      <div class="split-figure reveal reveal-4">
+        <span class="corner tl"></span><span class="corner bl"></span><span class="corner br"></span>
+        <span class="fig-cap"><b>FIG·05</b> — window dedup projection</span>
+        <span class="fig-tag">VIEW <span class="v">live</span></span>
+
+        <svg viewBox="0 0 720 460" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+          <!-- Raw log column -->
+          <g transform="translate(40, 80)">
+            <text class="node-sub" x="0" y="-12">RAW CDC LOG</text>
+            <rect class="node" x="0" y="0" width="200" height="320" rx="2" />
+
+            <g>
+              <rect x="10" y="14" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="29" style="font-size:9px">id=1001 · op=I · t=10:00</text>
+            </g>
+            <g>
+              <rect x="10" y="42" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="57" style="font-size:9px">id=1001 · op=U · t=10:01</text>
+            </g>
+            <g>
+              <rect x="10" y="70" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="85" style="font-size:9px">id=1002 · op=I · t=10:02</text>
+            </g>
+            <g>
+              <rect x="10" y="98" width="180" height="22" rx="1" fill="rgba(232,93,117,0.12)" />
+              <text class="node-sub" x="18" y="113" style="font-size:9px; fill:var(--coral)">id=1001 · op=D · t=10:03</text>
+            </g>
+            <g>
+              <rect x="10" y="126" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="141" style="font-size:9px">id=1003 · op=I · t=10:04</text>
+            </g>
+            <g>
+              <rect x="10" y="154" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="169" style="font-size:9px">id=1002 · op=U · t=10:05</text>
+            </g>
+            <g>
+              <rect x="10" y="182" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="197" style="font-size:9px">id=1003 · op=U · t=10:06</text>
+            </g>
+            <g>
+              <rect x="10" y="210" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="225" style="font-size:9px">id=1004 · op=I · t=10:07</text>
+            </g>
+            <g>
+              <rect x="10" y="238" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="253" style="font-size:9px">id=1002 · op=U · t=10:08</text>
+            </g>
+            <g>
+              <rect x="10" y="266" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="281" style="font-size:9px">id=1004 · op=U · t=10:09</text>
+            </g>
+            <g>
+              <rect x="10" y="294" width="180" height="22" rx="1" fill="rgba(78,197,165,0.08)" />
+              <text class="node-sub" x="18" y="309" style="font-size:9px">id=1003 · op=U · t=10:10</text>
+            </g>
+          </g>
+
+          <!-- dbt window machine -->
+          <g transform="translate(290, 200)">
+            <rect class="node" x="0" y="0" width="120" height="80" rx="2"
+                  style="fill:rgba(78,197,165,0.05); stroke:var(--mint)" />
+            <text class="node-label" x="60" y="22" text-anchor="middle" style="fill:var(--mint)">DBT</text>
+            <text class="node-sub" x="60" y="40" text-anchor="middle">ROW_NUMBER()</text>
+            <text class="node-sub" x="60" y="56" text-anchor="middle">PARTITION BY id</text>
+            <text class="node-sub" x="60" y="70" text-anchor="middle">rn=1 · op≠D</text>
+          </g>
+
+          <!-- Result column -->
+          <g transform="translate(460, 130)">
+            <text class="node-sub" x="0" y="-12" style="fill:var(--amber)">CURRENT STATE VIEW</text>
+            <rect class="node" x="0" y="0" width="220" height="220" rx="2"
+                  style="fill:rgba(244,160,32,0.04); stroke:var(--amber)" />
+
+            <g>
+              <rect x="10" y="14" width="200" height="44" rx="1" fill="rgba(244,160,32,0.1)" />
+              <text class="node-sub" x="18" y="32" style="font-size:9px; fill:var(--amber)">id=1002</text>
+              <text class="node-sub" x="18" y="48" style="font-size:8px">latest @ 10:08 (op=U)</text>
+            </g>
+            <g>
+              <rect x="10" y="64" width="200" height="44" rx="1" fill="rgba(244,160,32,0.1)" />
+              <text class="node-sub" x="18" y="82" style="font-size:9px; fill:var(--amber)">id=1003</text>
+              <text class="node-sub" x="18" y="98" style="font-size:8px">latest @ 10:10 (op=U)</text>
+            </g>
+            <g>
+              <rect x="10" y="114" width="200" height="44" rx="1" fill="rgba(244,160,32,0.1)" />
+              <text class="node-sub" x="18" y="132" style="font-size:9px; fill:var(--amber)">id=1004</text>
+              <text class="node-sub" x="18" y="148" style="font-size:8px">latest @ 10:09 (op=U)</text>
+            </g>
+            <g>
+              <rect x="10" y="164" width="200" height="44" rx="1" fill="rgba(232,93,117,0.05); stroke-width:1" stroke="var(--coral)" stroke-dasharray="2 3" />
+              <text class="node-sub" x="18" y="184" style="font-size:9px; fill:var(--coral); text-decoration:line-through">id=1001 · removed</text>
+              <text class="node-sub" x="18" y="198" style="font-size:8px; fill:var(--paper-mute)">filtered: op=D</text>
+            </g>
+          </g>
+
+          <!-- arrows -->
+          <line class="flow-line solid" x1="240" y1="240" x2="290" y2="240" stroke="var(--mint)" />
+          <line class="flow-line solid" x1="410" y1="240" x2="460" y2="240" stroke="var(--amber)" />
+
+          <circle r="3" class="packet-stream">
+            <animateMotion dur="1.2s" repeatCount="indefinite" path="M 240 240 L 290 240" />
+          </circle>
+          <circle r="3" class="packet-batch">
+            <animateMotion dur="1.2s" repeatCount="indefinite" path="M 410 240 L 460 240" />
+          </circle>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 07: DBT × FLINK INTEGRATION -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="6">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">07</span> &nbsp; / &nbsp; DBT × FLINK</span>
+      <span class="tag-section">PART VI — THE INTEGRATION</span>
+    </header>
+
+    <div class="split">
+      <div class="split-text">
+        <h1 class="eyebrow reveal reveal-2">ADAPTER LAYER</h1>
+        <h2 class="headline reveal reveal-3">dbt compiles.<br/><em>Flink executes.</em></h2>
+        <p class="lede reveal reveal-4">
+          The <code>dbt-flink-adapter</code> turns dbt's declarative SQL models into Flink SQL jobs against the SQL Gateway. Streaming and batch are the same code path — only a <b style="color:var(--paper)">materialization config</b> changes.
+        </p>
+        <ul class="bullets reveal reveal-5">
+          <li><b>Compile</b> — dbt parses Jinja, resolves <code>ref()</code>, builds DAG</li>
+          <li><b>Submit</b> — adapter sends Flink SQL via SQL Gateway REST</li>
+          <li><b>Execute</b> — Flink runs as <code>streaming</code> or <code>batch</code></li>
+          <li><b>Materialize</b> — <code>view · table · incremental · streaming</code></li>
+        </ul>
+      </div>
+
+      <div class="split-figure reveal reveal-4">
+        <span class="corner tl"></span><span class="corner bl"></span><span class="corner br"></span>
+        <span class="fig-cap"><b>FIG·07</b> — dbt → flink integration</span>
+        <span class="fig-tag">SQL GATEWAY <span class="v">REST</span></span>
+
+        <svg viewBox="0 0 720 460" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+          <!-- dbt model (source) -->
+          <g transform="translate(40, 60)">
+            <text class="node-sub" x="0" y="-12" style="fill:var(--mint)">▸ MODEL · mart_orders.sql</text>
+            <rect class="node" x="0" y="0" width="200" height="160" rx="2"
+                  style="fill:rgba(78,197,165,0.04); stroke:var(--mint)" />
+            <text class="node-sub" x="10" y="20" style="font-size:9px">
+              <tspan style="fill:var(--paper-mute)">{{ config(</tspan>
+            </text>
+            <text class="node-sub" x="10" y="34" style="font-size:9px">
+              <tspan style="fill:var(--paper-mute)">  materialized=</tspan><tspan style="fill:var(--coral)">'streaming'</tspan>
+            </text>
+            <text class="node-sub" x="10" y="48" style="font-size:9px">
+              <tspan style="fill:var(--paper-mute)">) }}</tspan>
+            </text>
+            <text class="node-sub" x="10" y="70" style="font-size:9px">
+              <tspan style="fill:var(--amber)">SELECT</tspan><tspan style="fill:var(--paper)"> id, status,</tspan>
+            </text>
+            <text class="node-sub" x="10" y="84" style="font-size:9px">
+              <tspan style="fill:var(--paper)">  </tspan><tspan style="fill:var(--mint)">SUM</tspan><tspan style="fill:var(--paper)">(amount) revenue</tspan>
+            </text>
+            <text class="node-sub" x="10" y="98" style="font-size:9px">
+              <tspan style="fill:var(--amber)">FROM</tspan><tspan style="fill:var(--paper)"> {{ </tspan><tspan style="fill:var(--mint)">ref</tspan><tspan style="fill:var(--paper)">(</tspan><tspan style="fill:var(--coral)">'orders_cdc'</tspan><tspan style="fill:var(--paper)">) }}</tspan>
+            </text>
+            <text class="node-sub" x="10" y="112" style="font-size:9px">
+              <tspan style="fill:var(--amber)">WHERE</tspan><tspan style="fill:var(--paper)"> op &lt;&gt; </tspan><tspan style="fill:var(--coral)">'D'</tspan>
+            </text>
+            <text class="node-sub" x="10" y="126" style="font-size:9px">
+              <tspan style="fill:var(--amber)">GROUP BY</tspan><tspan style="fill:var(--paper)"> id, status</tspan>
+            </text>
+            <text class="node-sub" x="10" y="148" style="font-size:8px; fill:var(--paper-mute); font-style:italic">
+              ▸ portable · version-controlled
+            </text>
+          </g>
+
+          <!-- adapter pipeline -->
+          <g transform="translate(285, 60)">
+            <text class="node-sub" x="65" y="-12" text-anchor="middle">DBT-FLINK-ADAPTER</text>
+            <!-- compile -->
+            <g transform="translate(0, 0)">
+              <rect class="node" x="0" y="0" width="130" height="36" rx="2" />
+              <text class="node-label" x="65" y="20" text-anchor="middle" style="font-size:10px">▸ COMPILE</text>
+              <text class="node-sub" x="65" y="32" text-anchor="middle" style="font-size:8px">jinja · ref() · dag</text>
+            </g>
+            <!-- resolve -->
+            <g transform="translate(0, 44)">
+              <rect class="node" x="0" y="0" width="130" height="36" rx="2" />
+              <text class="node-label" x="65" y="20" text-anchor="middle" style="font-size:10px">▸ RESOLVE</text>
+              <text class="node-sub" x="65" y="32" text-anchor="middle" style="font-size:8px">catalog · schema</text>
+            </g>
+            <!-- submit -->
+            <g transform="translate(0, 88)">
+              <rect class="node" x="0" y="0" width="130" height="36" rx="2"
+                    style="fill:rgba(244,160,32,0.08); stroke:var(--amber)" />
+              <text class="node-label" x="65" y="20" text-anchor="middle" style="fill:var(--amber); font-size:10px">▸ SUBMIT</text>
+              <text class="node-sub" x="65" y="32" text-anchor="middle" style="font-size:8px">rest → gateway</text>
+            </g>
+            <!-- track -->
+            <g transform="translate(0, 132)">
+              <rect class="node" x="0" y="0" width="130" height="36" rx="2" />
+              <text class="node-label" x="65" y="20" text-anchor="middle" style="font-size:10px">▸ TRACK</text>
+              <text class="node-sub" x="65" y="32" text-anchor="middle" style="font-size:8px">job_id · state</text>
+            </g>
+
+            <!-- vertical connector dots -->
+            <line x1="65" y1="36" x2="65" y2="44" stroke="var(--paper-mute)" stroke-dasharray="2 2" />
+            <line x1="65" y1="80" x2="65" y2="88" stroke="var(--paper-mute)" stroke-dasharray="2 2" />
+            <line x1="65" y1="124" x2="65" y2="132" stroke="var(--paper-mute)" stroke-dasharray="2 2" />
+          </g>
+
+          <!-- Flink SQL Gateway / Cluster -->
+          <g transform="translate(490, 60)">
+            <text class="node-sub" x="100" y="-12" text-anchor="middle" style="fill:var(--amber)">▸ FLINK SQL GATEWAY</text>
+            <rect class="node" x="0" y="0" width="200" height="160" rx="2"
+                  style="fill:rgba(244,160,32,0.04); stroke:var(--amber)" />
+            <text class="node-label" x="100" y="22" text-anchor="middle" style="font-size:11px; fill:var(--amber)">JOB · job_a3f1</text>
+            <text class="node-sub" x="100" y="36" text-anchor="middle" style="font-size:8px">runtime-mode = streaming</text>
+
+            <!-- job topology mini-diagram -->
+            <g transform="translate(20, 60)">
+              <rect class="node" x="0" y="0" width="40" height="22" rx="1" />
+              <text class="node-sub" x="20" y="14" text-anchor="middle" style="font-size:7px">SRC</text>
+              <line x1="40" y1="11" x2="60" y2="11" stroke="var(--paper-mute)" stroke-dasharray="2 2"/>
+              <rect class="node" x="60" y="0" width="40" height="22" rx="1" />
+              <text class="node-sub" x="80" y="14" text-anchor="middle" style="font-size:7px">FILTER</text>
+              <line x1="100" y1="11" x2="120" y2="11" stroke="var(--paper-mute)" stroke-dasharray="2 2"/>
+              <rect class="node" x="120" y="0" width="40" height="22" rx="1" />
+              <text class="node-sub" x="140" y="14" text-anchor="middle" style="font-size:7px">AGG</text>
+            </g>
+            <g transform="translate(20, 92)">
+              <line x1="80" y1="0" x2="80" y2="14" stroke="var(--paper-mute)" stroke-dasharray="2 2"/>
+              <rect class="node" x="60" y="14" width="40" height="22" rx="1"
+                    style="fill:rgba(78,197,165,0.08); stroke:var(--mint)" />
+              <text class="node-sub" x="80" y="28" text-anchor="middle" style="font-size:7px; fill:var(--mint)">SINK</text>
+            </g>
+
+            <!-- live state -->
+            <g transform="translate(20, 132)">
+              <circle cx="6" cy="0" r="4" fill="var(--mint)">
+                <animate attributeName="opacity" values="1;0.3;1" dur="1.4s" repeatCount="indefinite" />
+              </circle>
+              <text class="node-sub" x="16" y="4" style="font-size:9px; fill:var(--mint)">RUNNING · 14m32s</text>
+            </g>
+            <g transform="translate(20, 146)">
+              <text class="node-sub" x="0" y="0" style="font-size:8px">throughput: 1.2K rec/s</text>
+            </g>
+          </g>
+
+          <!-- Flow lines -->
+          <line class="flow-line solid" x1="240" y1="140" x2="285" y2="140" stroke="var(--mint)" />
+          <line class="flow-line solid" x1="415" y1="146" x2="490" y2="140" stroke="var(--amber)" />
+
+          <!-- Animated packets through pipeline -->
+          <circle r="4" class="packet-stream">
+            <animateMotion dur="1.6s" repeatCount="indefinite" path="M 240 140 L 285 140" />
+          </circle>
+          <rect width="10" height="10" class="packet-batch" rx="1">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 415 146 L 490 140" />
+          </rect>
+
+          <!-- Bottom callout: materialization matrix -->
+          <g transform="translate(40, 280)">
+            <rect width="640" height="140" rx="2" fill="rgba(245,233,212,0.02)" stroke="var(--paper-mute)" stroke-dasharray="3 4" />
+            <text class="node-sub" x="14" y="18" style="fill:var(--amber)">▸ MATERIALIZATION → EXECUTION MAP</text>
+
+            <!-- columns -->
+            <g transform="translate(20, 40)">
+              <rect width="140" height="80" rx="2" fill="rgba(245,233,212,0.03)" />
+              <text class="node-sub" x="70" y="20" text-anchor="middle" style="font-size:10px; fill:var(--paper)">view</text>
+              <text class="node-sub" x="70" y="36" text-anchor="middle" style="font-size:8px">→ Flink VIEW</text>
+              <text class="node-sub" x="70" y="50" text-anchor="middle" style="font-size:8px">no execution</text>
+              <text class="node-sub" x="70" y="68" text-anchor="middle" style="font-size:8px; fill:var(--paper-mute); font-style:italic">free · lazy</text>
+            </g>
+            <g transform="translate(180, 40)">
+              <rect width="140" height="80" rx="2" fill="rgba(244,160,32,0.05)" stroke="var(--amber)" />
+              <text class="node-sub" x="70" y="20" text-anchor="middle" style="font-size:10px; fill:var(--amber)">table</text>
+              <text class="node-sub" x="70" y="36" text-anchor="middle" style="font-size:8px">→ INSERT INTO</text>
+              <text class="node-sub" x="70" y="50" text-anchor="middle" style="font-size:8px">runtime-mode=batch</text>
+              <text class="node-sub" x="70" y="68" text-anchor="middle" style="font-size:8px; fill:var(--paper-mute); font-style:italic">one-shot</text>
+            </g>
+            <g transform="translate(340, 40)">
+              <rect width="140" height="80" rx="2" fill="rgba(244,160,32,0.05)" stroke="var(--amber)" />
+              <text class="node-sub" x="70" y="20" text-anchor="middle" style="font-size:10px; fill:var(--amber)">incremental</text>
+              <text class="node-sub" x="70" y="36" text-anchor="middle" style="font-size:8px">→ MERGE INTO</text>
+              <text class="node-sub" x="70" y="50" text-anchor="middle" style="font-size:8px">is_incremental()</text>
+              <text class="node-sub" x="70" y="68" text-anchor="middle" style="font-size:8px; fill:var(--paper-mute); font-style:italic">scheduled</text>
+            </g>
+            <g transform="translate(500, 40)">
+              <rect width="140" height="80" rx="2" fill="rgba(78,197,165,0.05)" stroke="var(--mint)" />
+              <text class="node-sub" x="70" y="20" text-anchor="middle" style="font-size:10px; fill:var(--mint)">streaming</text>
+              <text class="node-sub" x="70" y="36" text-anchor="middle" style="font-size:8px">→ INSERT INTO</text>
+              <text class="node-sub" x="70" y="50" text-anchor="middle" style="font-size:8px">runtime-mode=streaming</text>
+              <text class="node-sub" x="70" y="68" text-anchor="middle" style="font-size:8px; fill:var(--paper-mute); font-style:italic">long-lived job</text>
+            </g>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 08: STREAMING-AS-CODE WORKFLOW -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="7">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">08</span> &nbsp; / &nbsp; STREAMING-AS-CODE</span>
+      <span class="tag-section">PART VII — THE WORKFLOW</span>
+    </header>
+
+    <div class="reveal reveal-2">
+      <h1 class="eyebrow">DEVELOPER LOOP</h1>
+      <h2 class="headline">A streaming job is now a <em>pull request.</em></h2>
+      <p class="lede" style="margin-top: 1rem;">
+        Real-time pipelines used to live as imperative Java jars maintained by a platform team. Here, every transformation is a versioned dbt model — reviewed, tested, and deployed like any other change.
+      </p>
+    </div>
+
+    <div style="flex: 1; margin-top: 2.5rem; position: relative;" class="reveal reveal-4">
+      <svg viewBox="0 0 1280 320" width="100%" height="auto" preserveAspectRatio="xMidYMid meet">
+        <!-- horizontal pipeline -->
+        <line x1="60" y1="160" x2="1220" y2="160" stroke="var(--paper-mute)" stroke-width="1" stroke-dasharray="3 5" />
+
+        <!-- step 1 -->
+        <g transform="translate(60, 160)">
+          <circle cx="0" cy="0" r="22" class="node" style="fill:var(--ink-2); stroke:var(--mint)" />
+          <text class="node-label" x="0" y="5" text-anchor="middle" style="fill:var(--mint); font-size:11px">01</text>
+          <text class="node-sub" x="0" y="-40" text-anchor="middle" style="fill:var(--mint); font-size:10px">WRITE</text>
+          <text class="node-sub" x="0" y="48" text-anchor="middle" style="font-size:9px">dbt model</text>
+          <text class="node-sub" x="0" y="62" text-anchor="middle" style="font-size:9px; fill:var(--paper-mute)">orders_cdc.sql</text>
+        </g>
+
+        <!-- step 2 -->
+        <g transform="translate(255, 160)">
+          <circle cx="0" cy="0" r="22" class="node" style="fill:var(--ink-2); stroke:var(--paper-mute)" />
+          <text class="node-label" x="0" y="5" text-anchor="middle" style="font-size:11px">02</text>
+          <text class="node-sub" x="0" y="-40" text-anchor="middle" style="font-size:10px">TEST</text>
+          <text class="node-sub" x="0" y="48" text-anchor="middle" style="font-size:9px">dbt test</text>
+          <text class="node-sub" x="0" y="62" text-anchor="middle" style="font-size:9px; fill:var(--paper-mute)">unique · not_null</text>
+        </g>
+
+        <!-- step 3 -->
+        <g transform="translate(450, 160)">
+          <circle cx="0" cy="0" r="22" class="node" style="fill:var(--ink-2); stroke:var(--paper-mute)" />
+          <text class="node-label" x="0" y="5" text-anchor="middle" style="font-size:11px">03</text>
+          <text class="node-sub" x="0" y="-40" text-anchor="middle" style="font-size:10px">REVIEW</text>
+          <text class="node-sub" x="0" y="48" text-anchor="middle" style="font-size:9px">git pull request</text>
+          <text class="node-sub" x="0" y="62" text-anchor="middle" style="font-size:9px; fill:var(--paper-mute)">+ ci dry-run</text>
+        </g>
+
+        <!-- step 4 -->
+        <g transform="translate(645, 160)">
+          <circle cx="0" cy="0" r="22" class="node" style="fill:var(--ink-2); stroke:var(--amber)" />
+          <text class="node-label" x="0" y="5" text-anchor="middle" style="fill:var(--amber); font-size:11px">04</text>
+          <text class="node-sub" x="0" y="-40" text-anchor="middle" style="fill:var(--amber); font-size:10px">COMPILE</text>
+          <text class="node-sub" x="0" y="48" text-anchor="middle" style="font-size:9px">dbt run</text>
+          <text class="node-sub" x="0" y="62" text-anchor="middle" style="font-size:9px; fill:var(--paper-mute)">→ flink sql</text>
+        </g>
+
+        <!-- step 5 -->
+        <g transform="translate(840, 160)">
+          <circle cx="0" cy="0" r="22" class="node" style="fill:var(--ink-2); stroke:var(--amber)" />
+          <text class="node-label" x="0" y="5" text-anchor="middle" style="fill:var(--amber); font-size:11px">05</text>
+          <text class="node-sub" x="0" y="-40" text-anchor="middle" style="fill:var(--amber); font-size:10px">SUBMIT</text>
+          <text class="node-sub" x="0" y="48" text-anchor="middle" style="font-size:9px">sql gateway</text>
+          <text class="node-sub" x="0" y="62" text-anchor="middle" style="font-size:9px; fill:var(--paper-mute)">job_id returned</text>
+        </g>
+
+        <!-- step 6 -->
+        <g transform="translate(1035, 160)">
+          <circle cx="0" cy="0" r="22" class="node" style="fill:var(--ink-2); stroke:var(--amber)" />
+          <text class="node-label" x="0" y="5" text-anchor="middle" style="fill:var(--amber); font-size:11px">06</text>
+          <text class="node-sub" x="0" y="-40" text-anchor="middle" style="fill:var(--amber); font-size:10px">EXECUTE</text>
+          <text class="node-sub" x="0" y="48" text-anchor="middle" style="font-size:9px">flink runtime</text>
+          <text class="node-sub" x="0" y="62" text-anchor="middle" style="font-size:9px; fill:var(--paper-mute)">stream · forever</text>
+        </g>
+
+        <!-- step 7 -->
+        <g transform="translate(1220, 160)">
+          <circle cx="0" cy="0" r="22" class="node pulse" style="fill:rgba(78,197,165,0.1); stroke:var(--mint)" />
+          <text class="node-label" x="0" y="5" text-anchor="middle" style="fill:var(--mint); font-size:11px">07</text>
+          <text class="node-sub" x="0" y="-40" text-anchor="middle" style="fill:var(--mint); font-size:10px">OBSERVE</text>
+          <text class="node-sub" x="0" y="48" text-anchor="middle" style="font-size:9px">iceberg snapshots</text>
+          <text class="node-sub" x="0" y="62" text-anchor="middle" style="font-size:9px; fill:var(--paper-mute)">+ dbt docs</text>
+        </g>
+
+        <!-- animated packet flowing through entire pipeline -->
+        <circle r="6" class="packet-stream">
+          <animateMotion dur="6s" repeatCount="indefinite"
+            path="M 60 160 L 255 160 L 450 160 L 645 160 L 840 160 L 1035 160 L 1220 160" />
+        </circle>
+        <circle r="5" class="packet-batch">
+          <animateMotion dur="6s" repeatCount="indefinite" begin="2s"
+            path="M 60 160 L 255 160 L 450 160 L 645 160 L 840 160 L 1035 160 L 1220 160" />
+        </circle>
+      </svg>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem;">
+        <div style="border-left: 2px solid var(--coral); padding-left: 1.25rem;">
+          <div style="font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em; color: var(--coral); margin-bottom: 0.6rem;">▸ BEFORE — JAVA JAR</div>
+          <p style="font-family: var(--body); font-size: 0.95rem; color: var(--paper-dim); line-height: 1.5;">
+            Imperative Flink job. Maven build. Custom DSL. Platform team gatekeeps every change. New transformation = ticket + 2-week cycle.
+          </p>
+        </div>
+        <div style="border-left: 2px solid var(--mint); padding-left: 1.25rem;">
+          <div style="font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em; color: var(--mint); margin-bottom: 0.6rem;">▸ AFTER — DBT MODEL</div>
+          <p style="font-family: var(--body); font-size: 0.95rem; color: var(--paper-dim); line-height: 1.5;">
+            Declarative SQL. Same workflow as warehouse models. Analyst can ship a streaming aggregation in an afternoon, lineage and tests included.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 09: WHY THIS POC IS POWERFUL -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="8">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">09</span> &nbsp; / &nbsp; WHY IT MATTERS</span>
+      <span class="tag-section">PART VIII — THE POWER MULTIPLIER</span>
+    </header>
+
+    <div class="reveal reveal-2">
+      <h1 class="eyebrow">VALUE THESIS</h1>
+      <h2 class="headline">One pipeline. <em>Six superpowers.</em></h2>
+      <p class="lede" style="margin-top: 1rem; max-width: 70ch;">
+        Collapsing streaming and batch into a single dbt-managed surface unlocks capabilities that neither stack delivers alone. Each card below is a force-multiplier the PoC enables.
+      </p>
+    </div>
+
+    <div class="card-grid reveal reveal-4" style="margin-top: 2.5rem;">
+      <div class="card">
+        <div class="card-num">01 / UNIFIED</div>
+        <div class="card-title">One SQL surface, two runtimes</div>
+        <div class="card-body">
+          The same dbt model can run as a long-lived stream or an overnight backfill — flip <code style="font-family:var(--mono); color:var(--mint); font-size:0.85em">materialized</code> and the adapter rewires the runtime. No code fork between Lambda and Kappa worlds.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-num">02 / DEMOCRATISED</div>
+        <div class="card-title">Analysts ship streaming</div>
+        <div class="card-body">
+          Anyone fluent in SQL can author a real-time pipeline. The platform team owns the <b style="color:var(--paper)">runtime</b>, not every transformation — removing the bottleneck on every new metric.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-num">03 / GOVERNED</div>
+        <div class="card-title">Lineage across both worlds</div>
+        <div class="card-body">
+          dbt's DAG now spans Kafka topics, CDC logs, batch tables and downstream marts. <code style="font-family:var(--mono); color:var(--mint); font-size:0.85em">dbt docs</code> renders one continuous map from source event to dashboard.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-num">04 / TESTED</div>
+        <div class="card-title">Data quality at the edge</div>
+        <div class="card-body">
+          <code style="font-family:var(--mono); color:var(--mint); font-size:0.85em">unique</code>, <code style="font-family:var(--mono); color:var(--mint); font-size:0.85em">not_null</code>, custom expectations — the same generic tests cover streaming sinks. Bad data fails the build, not the dashboard.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-num">05 / RESILIENT</div>
+        <div class="card-title">Replay without re-engineering</div>
+        <div class="card-body">
+          A bug in a transformation? Roll forward by editing the SQL and re-materialising from the immutable CDC log. Iceberg time-travel + append-only design = backfills without state loss.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-num">06 / PORTABLE</div>
+        <div class="card-title">Open formats, no lock-in</div>
+        <div class="card-body">
+          Iceberg + Parquet + Glue catalogue means Athena, Trino, Snowflake and Spark all read the same tables. Today Flink writes; tomorrow anything reads. No vendor moat.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: auto; padding-top: 1.5rem; border-top: 1px dashed var(--paper-mute); display: flex; justify-content: space-between; align-items: baseline; font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--paper-mute);" class="reveal reveal-5">
+      <span><span style="color:var(--amber)">●</span> &nbsp; ROI · ONE TEAM · ONE LANGUAGE · TWO TIMESCALES</span>
+      <span>STREAM ⟷ BATCH · ONE TRUTH</span>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 10: CONFLICT — STREAMING UNDOES BATCH -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="9">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">10</span> &nbsp; / &nbsp; CONFLICT №1</span>
+      <span class="tag-section">PART IX — THE UNDO PROBLEM</span>
+    </header>
+
+    <div style="display: flex; flex-direction: column; flex: 1;">
+      <div class="reveal reveal-2">
+        <h1 class="eyebrow">CONFLICT №1</h1>
+        <h2 class="headline">When the stream <em>undoes</em> your fix.</h2>
+        <p class="lede" style="margin-top: 1rem;">
+          A manual batch UPDATE on a streaming table is fragile — if Kafka replays the event, your fix is overwritten. The recommended pattern splits raw and clean tables.
+        </p>
+      </div>
+
+      <div class="conflict-grid reveal reveal-4">
+        <div class="scenario bad">
+          <span class="scenario-tag">▸ DANGER · single table</span>
+          <h3 class="scenario-title">Streaming + manual UPDATE → race</h3>
+          <p style="font-family: var(--body); font-size: 0.95rem; line-height: 1.5; color: var(--paper-dim);">
+            Both writers target the same row. The last writer wins, and the stream usually wins last.
+          </p>
+
+          <div class="scenario-figure">
+            <svg viewBox="0 0 360 220" width="100%" height="100%">
+              <!-- target row -->
+              <g transform="translate(130, 90)">
+                <rect class="node" x="0" y="0" width="100" height="40" rx="2"
+                      style="fill:rgba(232,93,117,0.08); stroke:var(--coral)" />
+                <text class="node-label" x="50" y="18" text-anchor="middle" style="font-size:10px">id=1001</text>
+                <text class="node-sub" x="50" y="32" text-anchor="middle" style="font-size:8px">status=?</text>
+              </g>
+
+              <!-- stream arrow from left -->
+              <line x1="20" y1="50" x2="130" y2="100" stroke="var(--mint)" stroke-width="1.5" stroke-dasharray="3 4" />
+              <text class="node-sub" x="20" y="40" style="fill:var(--mint); font-size:9px">stream: 'created'</text>
+              <circle r="4" class="packet-stream">
+                <animateMotion dur="1.6s" repeatCount="indefinite" path="M 20 50 L 130 100" />
+              </circle>
+
+              <!-- batch arrow from right -->
+              <line x1="340" y1="50" x2="230" y2="100" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="3 4" />
+              <text class="node-sub" x="340" y="40" text-anchor="end" style="fill:var(--amber); font-size:9px">batch: 'completed'</text>
+              <rect width="10" height="10" class="packet-batch" rx="1">
+                <animateMotion dur="2.2s" repeatCount="indefinite" path="M 340 50 L 230 100" />
+              </rect>
+
+              <!-- replay arrow from left, again -->
+              <line x1="20" y1="180" x2="130" y2="130" stroke="var(--coral)" stroke-width="1.5" stroke-dasharray="3 4" />
+              <text class="node-sub" x="20" y="200" style="fill:var(--coral); font-size:9px">replay: 'created' (UNDO!)</text>
+              <circle r="4" class="packet-delete">
+                <animateMotion dur="1.6s" repeatCount="indefinite" begin="0.8s" path="M 20 180 L 130 130" />
+              </circle>
+            </svg>
+          </div>
+        </div>
+
+        <div class="scenario good">
+          <span class="scenario-tag">▸ SAFE · split tables</span>
+          <h3 class="scenario-title">Raw (append) · Clean (manual) · View on top</h3>
+          <p style="font-family: var(--body); font-size: 0.95rem; line-height: 1.5; color: var(--paper-dim);">
+            The stream never touches the corrected table. dbt views read from <code style="font-family: var(--mono); color:var(--mint); font-size:0.85em">_clean</code>.
+          </p>
+
+          <div class="scenario-figure">
+            <svg viewBox="0 0 360 220" width="100%" height="100%">
+              <!-- raw table -->
+              <g transform="translate(20, 30)">
+                <rect class="node" x="0" y="0" width="120" height="50" rx="2"
+                      style="fill:rgba(78,197,165,0.06); stroke:var(--mint)" />
+                <text class="node-label" x="60" y="22" text-anchor="middle" style="fill:var(--mint); font-size:10px">_RAW</text>
+                <text class="node-sub" x="60" y="38" text-anchor="middle" style="font-size:8px">stream · append</text>
+              </g>
+
+              <!-- clean table -->
+              <g transform="translate(20, 140)">
+                <rect class="node" x="0" y="0" width="120" height="50" rx="2"
+                      style="fill:rgba(244,160,32,0.06); stroke:var(--amber)" />
+                <text class="node-label" x="60" y="22" text-anchor="middle" style="fill:var(--amber); font-size:10px">_CLEAN</text>
+                <text class="node-sub" x="60" y="38" text-anchor="middle" style="font-size:8px">batch · UPDATE</text>
+              </g>
+
+              <!-- dbt view -->
+              <g transform="translate(220, 80)">
+                <rect class="node" x="0" y="0" width="120" height="60" rx="2"
+                      style="fill:rgba(245,233,212,0.05); stroke:var(--paper)" />
+                <text class="node-label" x="60" y="24" text-anchor="middle" style="font-size:10px">DBT VIEW</text>
+                <text class="node-sub" x="60" y="40" text-anchor="middle" style="font-size:8px">truth source</text>
+                <text class="node-sub" x="60" y="52" text-anchor="middle" style="font-size:8px">reads _CLEAN</text>
+              </g>
+
+              <!-- streams -->
+              <line x1="140" y1="55" x2="220" y2="100" stroke="var(--mint)" stroke-dasharray="3 4" />
+              <line x1="140" y1="165" x2="220" y2="120" stroke="var(--amber)" stroke-dasharray="3 4" />
+
+              <circle r="4" class="packet-stream">
+                <animateMotion dur="1.8s" repeatCount="indefinite" path="M 140 55 L 220 100" />
+              </circle>
+              <rect width="10" height="10" class="packet-batch" rx="1">
+                <animateMotion dur="2.6s" repeatCount="indefinite" path="M 140 165 L 220 120" />
+              </rect>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 11: GDPR -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="10">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">11</span> &nbsp; / &nbsp; CONFLICT №2</span>
+      <span class="tag-section">PART X — GDPR × STREAMING</span>
+    </header>
+
+    <div class="split">
+      <div class="split-text">
+        <h1 class="eyebrow reveal reveal-2">RIGHT TO ERASURE</h1>
+        <h2 class="headline reveal reveal-3">Soft-delete now,<br/><em>hard-delete later.</em></h2>
+        <p class="lede reveal reveal-4">
+          A hard DELETE during active streaming risks transaction conflicts. The pattern: streaming flips an <code>is_deleted</code> flag on the next event; a scheduled batch job purges flagged rows after the legal retention window. Every action lands in an immutable audit log.
+        </p>
+        <ul class="bullets reveal reveal-5">
+          <li><b>Phase 1 — Soft</b> · streaming sets <code>is_deleted=TRUE</code></li>
+          <li><b>Phase 2 — Audit</b> · request logged to <code>deletion_audit</code></li>
+          <li><b>Phase 3 — Hard</b> · batch <code>DELETE WHERE is_deleted</code></li>
+          <li><b>Replay</b> · Iceberg <code>FOR SYSTEM_TIME AS OF '…'</code> for compliance</li>
+        </ul>
+      </div>
+
+      <div class="split-figure reveal reveal-4">
+        <span class="corner tl"></span><span class="corner bl"></span><span class="corner br"></span>
+        <span class="fig-cap"><b>FIG·06</b> — gdpr deletion flow</span>
+        <span class="fig-tag">RETENTION <span class="v">90d</span></span>
+
+        <svg viewBox="0 0 720 460" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+          <!-- timeline arrow -->
+          <line x1="40" y1="80" x2="680" y2="80" stroke="var(--paper-mute)" stroke-width="1" />
+          <polygon points="680,76 690,80 680,84" fill="var(--paper-mute)" />
+          <text class="node-sub" x="680" y="68" text-anchor="end" style="font-size:9px">TIME →</text>
+
+          <!-- T0: request -->
+          <g transform="translate(60, 80)">
+            <circle cx="0" cy="0" r="8" fill="var(--coral)" />
+            <line x1="0" y1="8" x2="0" y2="50" stroke="var(--coral)" stroke-dasharray="2 3" />
+            <text class="node-sub" x="0" y="-16" text-anchor="middle" style="fill:var(--coral)">T₀</text>
+            <g transform="translate(-70, 60)">
+              <rect width="140" height="44" rx="2" class="node" style="fill:rgba(232,93,117,0.06); stroke:var(--coral)" />
+              <text class="node-label" x="70" y="20" text-anchor="middle" style="font-size:10px">GDPR REQUEST</text>
+              <text class="node-sub" x="70" y="34" text-anchor="middle" style="font-size:8px">customer_id=1001</text>
+            </g>
+          </g>
+
+          <!-- T1: soft delete + audit -->
+          <g transform="translate(240, 80)">
+            <circle cx="0" cy="0" r="8" fill="var(--amber)" />
+            <line x1="0" y1="8" x2="0" y2="50" stroke="var(--amber)" stroke-dasharray="2 3" />
+            <text class="node-sub" x="0" y="-16" text-anchor="middle" style="fill:var(--amber)">T₁ +1m</text>
+            <g transform="translate(-90, 60)">
+              <rect width="180" height="58" rx="2" class="node" style="fill:rgba(244,160,32,0.06); stroke:var(--amber)" />
+              <text class="node-label" x="90" y="20" text-anchor="middle" style="font-size:10px">SOFT DELETE</text>
+              <text class="node-sub" x="90" y="34" text-anchor="middle" style="font-size:8px">is_deleted = TRUE</text>
+              <text class="node-sub" x="90" y="48" text-anchor="middle" style="font-size:8px; fill:var(--mint)">+ deletion_audit row</text>
+            </g>
+          </g>
+
+          <!-- T2: stream still flowing safely -->
+          <g transform="translate(420, 80)">
+            <circle cx="0" cy="0" r="8" fill="var(--mint)" />
+            <line x1="0" y1="8" x2="0" y2="50" stroke="var(--mint)" stroke-dasharray="2 3" />
+            <text class="node-sub" x="0" y="-16" text-anchor="middle" style="fill:var(--mint)">T₂ ongoing</text>
+            <g transform="translate(-90, 60)">
+              <rect width="180" height="58" rx="2" class="node" style="fill:rgba(78,197,165,0.06); stroke:var(--mint)" />
+              <text class="node-label" x="90" y="20" text-anchor="middle" style="font-size:10px">STREAM CONTINUES</text>
+              <text class="node-sub" x="90" y="34" text-anchor="middle" style="font-size:8px">no transaction conflict</text>
+              <text class="node-sub" x="90" y="48" text-anchor="middle" style="font-size:8px">queries filter is_deleted</text>
+            </g>
+          </g>
+
+          <!-- T3: batch hard delete -->
+          <g transform="translate(620, 80)">
+            <circle cx="0" cy="0" r="8" fill="var(--coral)" />
+            <line x1="0" y1="8" x2="0" y2="50" stroke="var(--coral)" stroke-dasharray="2 3" />
+            <text class="node-sub" x="0" y="-16" text-anchor="middle" style="fill:var(--coral)">T₃ +90d</text>
+            <g transform="translate(-90, 60)">
+              <rect width="180" height="58" rx="2" class="node" style="fill:rgba(232,93,117,0.06); stroke:var(--coral)" />
+              <text class="node-label" x="90" y="20" text-anchor="middle" style="font-size:10px">HARD DELETE</text>
+              <text class="node-sub" x="90" y="34" text-anchor="middle" style="font-size:8px">batch · purge · compact</text>
+              <text class="node-sub" x="90" y="48" text-anchor="middle" style="font-size:8px">parquet rewritten</text>
+            </g>
+          </g>
+
+          <!-- packet showing deletion request flowing along timeline -->
+          <circle r="5" class="packet-delete">
+            <animateMotion dur="6s" repeatCount="indefinite" path="M 60 80 L 240 80 L 420 80 L 620 80" />
+          </circle>
+
+          <!-- audit log box at bottom -->
+          <g transform="translate(60, 290)">
+            <rect width="600" height="120" rx="2" class="node" style="fill:rgba(245,233,212,0.02)" />
+            <text class="node-sub" x="14" y="20" style="fill:var(--amber)">▸ DELETION_AUDIT (immutable)</text>
+
+            <g transform="translate(14, 36)">
+              <text class="node-sub" x="0" y="14" style="font-size:9px"><tspan style="fill:var(--paper-mute)">request_id</tspan> · <tspan style="fill:var(--mint)">REQ-2026-0451</tspan></text>
+              <text class="node-sub" x="0" y="32" style="font-size:9px"><tspan style="fill:var(--paper-mute)">customer_id</tspan> · 1001</text>
+              <text class="node-sub" x="0" y="50" style="font-size:9px"><tspan style="fill:var(--paper-mute)">requested_at</tspan> · 2026-05-04T10:00:00Z</text>
+              <text class="node-sub" x="0" y="68" style="font-size:9px"><tspan style="fill:var(--paper-mute)">approved_by</tspan> · dpo@nbp.com</text>
+              <text class="node-sub" x="0" y="80" style="font-size:9px; font-style:italic; fill:var(--paper-mute)">▸ never modified · enables compliance reporting via time-travel</text>
+            </g>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────────────────── -->
+  <!-- SLIDE 12: RECAP / COMPARISON -->
+  <!-- ───────────────────────────────────────────── -->
+  <section class="slide" data-slide="11">
+    <header class="slide-header reveal reveal-1">
+      <span><span class="tag-num">12</span> &nbsp; / &nbsp; RECAP</span>
+      <span class="tag-section">PART XI — STACK COMPARISON</span>
+    </header>
+
+    <div class="reveal reveal-2">
+      <h1 class="eyebrow">SUMMARY</h1>
+      <h2 class="headline">Two pipelines.<br/><em>One coherent system.</em></h2>
+    </div>
+
+    <div class="compare reveal reveal-4">
+      <div class="compare-head">DIMENSION</div>
+      <div class="compare-head stream">▸ STREAMING</div>
+      <div class="compare-head batch">▸ BATCH</div>
+
+      <div class="label">Source</div>
+      <div class="val">Kafka (CDC headers + payload)</div>
+      <div class="val">S3 Parquet (Hive-partitioned)</div>
+
+      <div class="label">Mode</div>
+      <div class="val">Long-lived · <code style="font-family:var(--mono);color:var(--mint)">runtime-mode=streaming</code></div>
+      <div class="val">One-shot · <code style="font-family:var(--mono);color:var(--amber)">runtime-mode=batch</code></div>
+
+      <div class="label">Commit</div>
+      <div class="val">Snapshot every <b>10s</b> · EXACTLY_ONCE</div>
+      <div class="val">Single snapshot at job end</div>
+
+      <div class="label">Sink shape</div>
+      <div class="val">Append-only CDC log (Iceberg v2)</div>
+      <div class="val">Target tables (partitioned)</div>
+
+      <div class="label">Duplicate keys</div>
+      <div class="val">Upsert via PK · or dbt window dedup</div>
+      <div class="val">Upsert · or dedup in batch SQL</div>
+
+      <div class="label">Deletes</div>
+      <div class="val">Header <code style="font-family:var(--mono);color:var(--coral)">op=DELETE</code> · soft flag</div>
+      <div class="val">SQL <code style="font-family:var(--mono);color:var(--coral)">DELETE</code> in batch mode</div>
+
+      <div class="label">Manual fix during run</div>
+      <div class="val" style="color: var(--coral)">RISKY — stream may overwrite</div>
+      <div class="val">Safe via <code style="font-family:var(--mono);color:var(--mint)">_clean</code> table split</div>
+
+      <div class="label">GDPR delete</div>
+      <div class="val">Soft-flag · then batch hard-purge</div>
+      <div class="val">Audit log + Iceberg time-travel</div>
+    </div>
+
+    <div style="margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--paper-mute); display: flex; justify-content: space-between; align-items: baseline; font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--paper-mute);" class="reveal reveal-5">
+      <span><span style="color:var(--amber)">●</span> &nbsp; END · DECK 001 · V·1</span>
+      <span>NEXT — COMPACTION JOB · STREAMING DBT MATERIALIZATION · MSAF VS ECS</span>
+    </div>
+  </section>
+
+</main>
+
+<nav class="nav">
+  <button class="nav-arrow" id="prev" aria-label="Previous">←</button>
+  <div class="nav-dots" id="dots"></div>
+  <button class="nav-arrow" id="next" aria-label="Next">→</button>
+</nav>
+
+<div class="hint">
+  <kbd>←</kbd> <kbd>→</kbd> NAVIGATE &nbsp; · &nbsp; <kbd>SPACE</kbd> ADVANCE
+</div>
+
+<script>
+(function() {
+  const deck = document.getElementById('deck');
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  const dotsEl = document.getElementById('dots');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const counter = document.getElementById('counter-current');
+  const counterTotal = document.getElementById('counter-total');
+  const progress = document.getElementById('progress');
+
+  let current = 0;
+
+  // Build dots
+  counterTotal.textContent = String(total).padStart(2, '0');
+  for (let i = 0; i < total; i++) {
+    const b = document.createElement('button');
+    b.className = 'nav-dot';
+    b.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+    b.addEventListener('click', () => go(i));
+    dotsEl.appendChild(b);
+  }
+  const dotEls = dotsEl.querySelectorAll('.nav-dot');
+
+  function go(i) {
+    if (i < 0) i = 0;
+    if (i >= total) i = total - 1;
+    current = i;
+    deck.style.transform = 'translateX(-' + (i * 100) + 'vw)';
+    counter.textContent = String(i + 1).padStart(2, '0');
+    progress.style.width = (((i + 1) / total) * 100) + '%';
+    slides.forEach((s, idx) => {
+      s.classList.toggle('active', idx === i);
+    });
+    dotEls.forEach((d, idx) => {
+      d.classList.toggle('active', idx === i);
+    });
+  }
+
+  function next() { go(current + 1); }
+  function prev() { go(current - 1); }
+
+  prevBtn.addEventListener('click', prev);
+  nextBtn.addEventListener('click', next);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+      e.preventDefault();
+      next();
+    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+      e.preventDefault();
+      prev();
+    } else if (e.key === 'Home') {
+      go(0);
+    } else if (e.key === 'End') {
+      go(total - 1);
+    } else if (e.key >= '1' && e.key <= '9') {
+      const n = parseInt(e.key, 10) - 1;
+      if (n < total) go(n);
+    }
+  });
+
+  // Touch swipe
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 60) (dx < 0 ? next : prev)();
+  }, { passive: true });
+
+  // Init
+  go(0);
+})();
+</script>
+
+</body>
+</html>

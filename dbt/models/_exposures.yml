@@ -1,0 +1,51 @@
+version: 2
+
+# ─────────────────────────────────────────────────────────
+# DEMO: EXPOSURES
+#   - declare downstream consumers (dashboards, ML pipelines,
+#     reverse-ETL jobs) so they appear in the lineage graph
+#   - answers "if I break model X, what breaks downstream?"
+#   - shown in `dbt docs serve`
+# ─────────────────────────────────────────────────────────
+
+exposures:
+
+  - name: revenue_dashboard
+    label: "Daily Revenue Dashboard"
+    type: dashboard
+    maturity: high
+    url: https://looker.nbp.com/dashboards/daily-revenue
+    description: |
+      Executive dashboard tracking daily revenue, order counts,
+      and top customers. Refreshed every 15 minutes.
+    owner:
+      name: Analytics Team
+      email: analytics@nbp.com
+    depends_on:
+      - ref('fct_daily_revenue')
+      - ref('mart_orders_summary')
+      - ref('order_status_codes')
+
+  - name: gdpr_compliance_report
+    label: "GDPR Right-to-Erasure Audit"
+    type: notebook
+    maturity: medium
+    description: |
+      Quarterly compliance report — proves every deletion request
+      resulted in actual data removal within the SLA window.
+    owner:
+      name: Data Protection Officer
+      email: dpo@nbp.com
+    depends_on:
+      - ref('mart_orders_active')
+
+  - name: ml_churn_model
+    label: "Customer Churn Prediction"
+    type: ml
+    maturity: low
+    description: "Trains weekly on per-customer revenue + recency features"
+    owner:
+      name: ML Platform
+      email: ml-platform@nbp.com
+    depends_on:
+      - ref('fct_daily_revenue')
